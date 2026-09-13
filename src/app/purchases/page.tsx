@@ -1,3 +1,4 @@
+'use client';
 import React from 'react';
 import { useShop } from '../../context/ShopContext';
 import { TransactionForm } from '../../components/common/TransactionForm';

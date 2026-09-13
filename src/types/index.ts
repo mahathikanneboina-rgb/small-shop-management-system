@@ -105,6 +105,7 @@ export type Transaction = Sale | Purchase;
 
 
 export interface DashboardMetrics {
+  estimatedProfit?: number;
   totalProducts: number;
   totalStockUnits: number;
   lowStockCount: number;
@@ -116,6 +117,7 @@ export interface DashboardMetrics {
   totalCustomers: number;
   totalSuppliers: number;
   totalExpenses: number;
+
 
 }
 

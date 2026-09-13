@@ -1,8 +1,9 @@
 'use client';
 
 import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
-import { Product, StockHistory, DashboardMetrics, StockChangeReason, Sale, Purchase } from '../types';
+import { Product, StockHistory, DashboardMetrics, StockChangeReason, Sale, Purchase, Expense } from '../types';
 import { transactionService } from '../services/transactionService';
+import { expenseService } from '../services/expenseService';
 import { storageService } from '../services/storageService';
 
 export interface ToastMessage {
@@ -14,6 +15,9 @@ export interface ToastMessage {
 interface ShopContextType {
   products: Product[];
   stockHistory: StockHistory[];
+  sales: Sale[];
+  purchases: Purchase[];
+  expenses: Expense[];
   metrics: DashboardMetrics;
   isLoading: boolean;
   toasts: ToastMessage[];
@@ -36,6 +40,7 @@ interface ShopContextType {
   getProductById: (id: string) => Product | undefined;
   recordSale: (productId: string, quantity: number, paymentMethod: 'Cash' | 'UPI' | 'Credit', notes?: string) => boolean;
   recordPurchase: (productId: string, quantity: number, supplierName: string, notes?: string) => boolean;
+  recordExpense: (expense: Omit<Expense, 'id'>) => Expense;
 }
 
 const ShopContext = createContext<ShopContextType | undefined>(undefined);
@@ -45,6 +50,7 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [stockHistory, setStockHistory] = useState<StockHistory[]>([]);
   const [sales, setSales] = useState<Sale[]>([]);
   const [purchases, setPurchases] = useState<Purchase[]>([]);
+  const [expenses, setExpenses] = useState<Expense[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
@@ -65,8 +71,14 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       const initialProducts = storageService.getProducts();
       const initialHistory = storageService.getStockHistory();
+      const initialSales = transactionService.getSales();
+      const initialPurchases = transactionService.getPurchases();
+      const initialExpenses = expenseService.getExpenses();
       setProducts(initialProducts);
       setStockHistory(initialHistory);
+      setSales(initialSales);
+      setPurchases(initialPurchases);
+      setExpenses(initialExpenses);
     } catch (err) {
       console.error('Failed to load initial data:', err);
       showToast('error', 'Failed to load shop data from storage');
@@ -84,6 +96,7 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
     let totalPotentialRevenue = 0;
     let totalSalesAmount = 0;
     let totalPurchasesAmount = 0;
+    let totalExpenses = 0;
 
     products.forEach((p) => {
       totalStockUnits += p.quantity;
@@ -103,6 +116,14 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
     purchases.forEach((p) => {
       totalPurchasesAmount += p.totalAmount;
     });
+    expenses.forEach((e) => {
+      totalExpenses += e.amount;
+    });
+
+    const estimatedProfit = totalSalesAmount -
+      // cost of goods sold using unit price at sale time
+      sales.reduce((sum, s) => sum + s.unitPrice * s.quantity, 0) -
+      totalExpenses;
 
     return {
       totalProducts: products.length,
@@ -113,8 +134,10 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
       totalPotentialRevenue,
       totalSalesAmount,
       totalPurchasesAmount,
-    };
-  }, [products, sales, purchases]);
+      totalExpenses,
+      estimatedProfit,
+    } as DashboardMetrics;
+  }, [products, sales, purchases, expenses]);
 
   const addProduct = useCallback(
     (productData: Omit<Product, 'id' | 'createdAt' | 'updatedAt'>): Product => {
@@ -239,6 +262,8 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
         'success',
         `Stock for "${target.name}" adjusted (${delta > 0 ? `+${delta}` : delta})`
       );
+
+
       return true;
     },
     [products, showToast]
@@ -262,6 +287,9 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
     storageService.resetToSampleData();
     setProducts(storageService.getProducts());
     setStockHistory(storageService.getStockHistory());
+    setSales([]);
+    setPurchases([]);
+    setExpenses([]);
     showToast('success', 'Reset data to sample products');
   }, [showToast]);
 
@@ -341,6 +369,16 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
     },
     [products, adjustStock, showToast]
   );
+// Record an expense transaction
+const recordExpense = useCallback(
+  (expense: Omit<Expense, 'id'>) => {
+    const newExp = expenseService.addExpense(expense);
+    setExpenses((prev) => [newExp, ...prev]);
+    showToast('success', `Expense recorded: ${newExp.category}`);
+    return newExp;
+  },
+  [showToast]
+);
 
   return (
     <ShopContext.Provider
@@ -349,6 +387,7 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
         stockHistory,
         sales,
         purchases,
+        expenses,
         metrics,
         isLoading,
         toasts,
@@ -362,6 +401,7 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
         getProductById,
         recordSale,
         recordPurchase,
+        recordExpense,
       }}
     >
       {children}
