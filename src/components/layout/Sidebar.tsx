@@ -20,8 +20,8 @@ interface NavItemDef {
 const NAV_ITEMS: NavItemDef[] = [
   { label: 'Dashboard', href: '/', icon: '📊', isWorking: true },
   { label: 'Products', href: '/products', icon: '📦', isWorking: true },
-  { label: 'Sales', href: '/coming-soon?feature=Sales', icon: '🛒', isWorking: false, featureKey: 'Sales' },
-  { label: 'Purchases', href: '/coming-soon?feature=Purchases', icon: '📥', isWorking: false, featureKey: 'Purchases' },
+  { label: 'Sales', href: '/sales', icon: '🛒', isWorking: true },
+  { label: 'Purchases', href: '/purchases', icon: '📥', isWorking: true },
   { label: 'Customers', href: '/coming-soon?feature=Customers', icon: '👥', isWorking: false, featureKey: 'Customers' },
   { label: 'Suppliers', href: '/coming-soon?feature=Suppliers', icon: '🏭', isWorking: false, featureKey: 'Suppliers' },
   { label: 'Expenses', href: '/coming-soon?feature=Expenses', icon: '💸', isWorking: false, featureKey: 'Expenses' },

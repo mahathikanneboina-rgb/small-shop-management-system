@@ -47,6 +47,34 @@ export interface StockHistory {
   notes?: string;
 }
 
+// New transaction types
+export interface Sale {
+  id: string;
+  productId: string;
+  productName: string;
+  quantity: number;
+  unitPrice: number; // selling price at time of sale
+  totalAmount: number;
+  paymentMethod: 'Cash' | 'UPI' | 'Credit';
+  notes?: string;
+  timestamp: string;
+}
+
+export interface Purchase {
+  id: string;
+  productId: string;
+  productName: string;
+  quantity: number;
+  unitPrice: number; // purchase price at time of purchase
+  totalAmount: number;
+  supplierName: string;
+  notes?: string;
+  timestamp: string;
+}
+
+export type Transaction = Sale | Purchase;
+
+
 export interface DashboardMetrics {
   totalProducts: number;
   totalStockUnits: number;
@@ -54,7 +82,10 @@ export interface DashboardMetrics {
   outOfStockCount: number;
   totalInventoryCost: number;
   totalPotentialRevenue: number;
+  totalSalesAmount: number; // sum of all sale totalAmount
+  totalPurchasesAmount: number; // sum of all purchase totalAmount
 }
+
 
 export function calculateStockStatus(quantity: number, minStock: number): StockStatus {
   if (quantity <= 0) {

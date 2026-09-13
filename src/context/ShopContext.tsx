@@ -1,7 +1,8 @@
 'use client';
 
 import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
-import { Product, StockHistory, DashboardMetrics, StockChangeReason } from '../types';
+import { Product, StockHistory, DashboardMetrics, StockChangeReason, Sale, Purchase } from '../types';
+import { transactionService } from '../services/transactionService';
 import { storageService } from '../services/storageService';
 
 export interface ToastMessage {
@@ -33,6 +34,8 @@ interface ShopContextType {
   deleteProduct: (id: string) => void;
   resetSampleData: () => void;
   getProductById: (id: string) => Product | undefined;
+  recordSale: (productId: string, quantity: number, paymentMethod: 'Cash' | 'UPI' | 'Credit', notes?: string) => boolean;
+  recordPurchase: (productId: string, quantity: number, supplierName: string, notes?: string) => boolean;
 }
 
 const ShopContext = createContext<ShopContextType | undefined>(undefined);
@@ -40,6 +43,8 @@ const ShopContext = createContext<ShopContextType | undefined>(undefined);
 export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [products, setProducts] = useState<Product[]>([]);
   const [stockHistory, setStockHistory] = useState<StockHistory[]>([]);
+  const [sales, setSales] = useState<Sale[]>([]);
+  const [purchases, setPurchases] = useState<Purchase[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
@@ -77,6 +82,8 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
     let outOfStockCount = 0;
     let totalInventoryCost = 0;
     let totalPotentialRevenue = 0;
+    let totalSalesAmount = 0;
+    let totalPurchasesAmount = 0;
 
     products.forEach((p) => {
       totalStockUnits += p.quantity;
@@ -90,6 +97,13 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
       totalPotentialRevenue += p.sellingPrice * p.quantity;
     });
 
+    sales.forEach((s) => {
+      totalSalesAmount += s.totalAmount;
+    });
+    purchases.forEach((p) => {
+      totalPurchasesAmount += p.totalAmount;
+    });
+
     return {
       totalProducts: products.length,
       totalStockUnits,
@@ -97,8 +111,10 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
       outOfStockCount,
       totalInventoryCost,
       totalPotentialRevenue,
+      totalSalesAmount,
+      totalPurchasesAmount,
     };
-  }, [products]);
+  }, [products, sales, purchases]);
 
   const addProduct = useCallback(
     (productData: Omit<Product, 'id' | 'createdAt' | 'updatedAt'>): Product => {
@@ -256,11 +272,83 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
     [products]
   );
 
+  // Record a sale transaction
+  const recordSale = useCallback(
+    (productId: string, quantity: number, paymentMethod: 'Cash' | 'UPI' | 'Credit', notes?: string) => {
+      const product = products.find((p) => p.id === productId);
+      if (!product) {
+        showToast('error', 'Product not found');
+        return false;
+      }
+      if (quantity <= 0) {
+        showToast('error', 'Quantity must be greater than zero');
+        return false;
+      }
+      if (product.quantity < quantity) {
+        showToast('error', 'Insufficient stock for sale');
+        return false;
+      }
+      const unitPrice = product.sellingPrice;
+      const totalAmount = unitPrice * quantity;
+      const success = adjustStock(productId, -quantity, 'Sale', notes);
+      if (!success) return false;
+      const saleEntry = transactionService.addSale({
+        productId,
+        productName: product.name,
+        quantity,
+        unitPrice,
+        totalAmount,
+        paymentMethod,
+        notes,
+        timestamp: new Date().toISOString(),
+      });
+      setSales((prev) => [saleEntry, ...prev]);
+      showToast('success', `Sale recorded for ${product.name}`);
+      return true;
+    },
+    [products, adjustStock, showToast]
+  );
+
+  // Record a purchase transaction
+  const recordPurchase = useCallback(
+    (productId: string, quantity: number, supplierName: string, notes?: string) => {
+      const product = products.find((p) => p.id === productId);
+      if (!product) {
+        showToast('error', 'Product not found');
+        return false;
+      }
+      if (quantity <= 0) {
+        showToast('error', 'Quantity must be greater than zero');
+        return false;
+      }
+      const unitPrice = product.purchasePrice;
+      const totalAmount = unitPrice * quantity;
+      const success = adjustStock(productId, quantity, 'Purchase', notes);
+      if (!success) return false;
+      const purchaseEntry = transactionService.addPurchase({
+        productId,
+        productName: product.name,
+        quantity,
+        unitPrice,
+        totalAmount,
+        supplierName,
+        notes,
+        timestamp: new Date().toISOString(),
+      });
+      setPurchases((prev) => [purchaseEntry, ...prev]);
+      showToast('success', `Purchase recorded for ${product.name}`);
+      return true;
+    },
+    [products, adjustStock, showToast]
+  );
+
   return (
     <ShopContext.Provider
       value={{
         products,
         stockHistory,
+        sales,
+        purchases,
         metrics,
         isLoading,
         toasts,
@@ -272,6 +360,8 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
         deleteProduct,
         resetSampleData,
         getProductById,
+        recordSale,
+        recordPurchase,
       }}
     >
       {children}
