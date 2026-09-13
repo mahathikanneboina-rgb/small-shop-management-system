@@ -72,6 +72,35 @@ export interface Purchase {
   timestamp: string;
 }
 
+// New entity types
+export interface Customer {
+  id: string;
+  name: string;
+  phone: string;
+  address: string;
+  notes?: string;
+  totalPurchases?: number; // optional aggregate
+  creditDue?: number; // optional credit amount
+}
+
+export interface Supplier {
+  id: string;
+  name: string;
+  phone: string;
+  address: string;
+  notes?: string;
+  totalPurchases?: number; // optional aggregate
+  amountPayable?: number; // optional payable amount
+}
+
+export interface Expense {
+  id: string;
+  category: 'Rent' | 'Electricity' | 'Transport' | 'Maintenance' | 'Other';
+  amount: number;
+  description?: string;
+  date: string; // ISO string
+}
+
 export type Transaction = Sale | Purchase;
 
 
@@ -84,6 +113,10 @@ export interface DashboardMetrics {
   totalPotentialRevenue: number;
   totalSalesAmount: number; // sum of all sale totalAmount
   totalPurchasesAmount: number; // sum of all purchase totalAmount
+  totalCustomers: number;
+  totalSuppliers: number;
+  totalExpenses: number;
+
 }
 
 

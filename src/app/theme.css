@@ -1,0 +1,149 @@
+/* src/app/theme.css */
+/* Premium UI Theme – inspired by Humany design aesthetic */
+
+:root {
+  /* Typography */
+  --font-sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-size-base: 0.95rem;
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-bold: 600;
+
+  /* Color Palette – vibrant yet harmonious */
+  --c-primary: hsl(226, 71%, 55%);   /* deep blue */
+  --c-primary-light: hsl(226, 71%, 95%);
+  --c-primary-dark: hsl(226, 71%, 35%);
+  --c-accent: hsl(340, 78%, 60%);   /* bright pink */
+  --c-background: hsl(210, 20%, 98%);
+  --c-surface: hsl(0, 0%, 100%);
+  --c-surface-glass: hsla(0, 0%, 100%, 0.6);
+  --c-text-primary: hsl(210, 15%, 20%);
+  --c-text-secondary: hsl(210, 10%, 40%);
+  --c-border: hsl(210, 15%, 85%);
+}
+
+/* Global resets – already mostly covered, just ensure font */
+body {
+  font-family: var(--font-sans);
+  font-size: var(--font-size-base);
+  background: var(--c-background);
+  color: var(--c-text-primary);
+  line-height: 1.6;
+}
+
+/* Glassmorphism container – use for cards, modals, forms */
+.glass {
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  background: var(--c-surface-glass);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--c-border);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+  padding: 1.5rem;
+}
+
+/* Primary button – vibrant with subtle animation */
+.btn-primary {
+  background: var(--c-primary);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-md);
+  padding: 0.6rem 1.2rem;
+  font-weight: var(--font-weight-medium);
+  transition: background 0.2s ease, transform 0.1s ease;
+}
+.btn-primary:hover {
+  background: var(--c-primary-dark);
+  transform: translateY(-2px);
+}
+
+/* Accent button – for secondary actions */
+.btn-accent {
+  background: var(--c-accent);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-md);
+  padding: 0.6rem 1.2rem;
+  font-weight: var(--font-weight-medium);
+  transition: background 0.2s ease, transform 0.1s ease;
+}
+.btn-accent:hover {
+  background: hsl(340, 78%, 55%);
+  transform: translateY(-2px);
+}
+
+/* Form controls – refined look */
+.form-control {
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-sm);
+  padding: 0.6rem 0.9rem;
+  font-size: var(--font-size-base);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  background: #fff;
+}
+.form-control:focus {
+  border-color: var(--c-primary);
+  box-shadow: 0 0 0 3px rgba(66, 123, 255, 0.15);
+}
+
+/* Headings – subtle gradient */
+h1, h2, h3, h4, h5, h6 {
+  font-weight: var(--font-weight-bold);
+  background: linear-gradient(45deg, var(--c-primary), var(--c-accent));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* Card – uses glass effect with a subtle border */
+.card {
+  background: var(--c-surface-glass);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 8px 20px rgba(0,0,0,0.06);
+  padding: 1.5rem;
+  backdrop-filter: blur(8px);
+}
+
+/* Table – modern minimal */
+.table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0 0.5rem;
+}
+.table th {
+  text-align: left;
+  font-weight: var(--font-weight-medium);
+  color: var(--c-text-secondary);
+  padding: 0.5rem 1rem;
+}
+.table td {
+  background: var(--c-surface-glass);
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius-sm);
+}
+.table tr:hover td {
+  background: var(--c-primary-light);
+}
+
+/* Utility classes */
+.text-center { text-align: center; }
+.mt-2 { margin-top: 0.5rem; }
+.mb-2 { margin-bottom: 0.5rem; }
+.p-2 { padding: 0.5rem; }
+
+/* Dark mode – triggered by prefers-color-scheme */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --c-background: hsl(210, 15%, 10%);
+    --c-surface: hsl(210, 15%, 15%);
+    --c-surface-glass: hsla(210, 15%, 20%, 0.6);
+    --c-text-primary: hsl(210, 20%, 90%);
+    --c-text-secondary: hsl(210, 10%, 70%);
+    --c-border: hsl(210, 15%, 25%);
+  }
+  .glass, .card, .table td {
+    background: var(--c-surface-glass);
+  }
+  .btn-primary { background: var(--c-primary); }
+  .btn-primary:hover { background: var(--c-primary-dark); }
+}
