@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import './globals.css';
 import { ShopProvider } from '../context/ShopContext';
+import { AuthProvider } from '../context/AuthContext';
 import { AppLayout } from '../components/layout/AppLayout';
 
 export const metadata: Metadata = {
@@ -16,9 +17,11 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body>
-        <ShopProvider>
-          <AppLayout>{children}</AppLayout>
-        </ShopProvider>
+        <AuthProvider>
+          <ShopProvider>
+            <AppLayout>{children}</AppLayout>
+          </ShopProvider>
+        </AuthProvider>
       </body>
     </html>
   );

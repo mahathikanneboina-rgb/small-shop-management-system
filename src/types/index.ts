@@ -122,6 +122,15 @@ export interface DashboardMetrics {
 }
 
 
+// User profile stored in Firestore
+export interface UserProfile {
+  uid: string;
+  name: string;
+  email: string;
+  role: 'owner' | 'staff';
+  createdAt: string;
+}
+
 export function calculateStockStatus(quantity: number, minStock: number): StockStatus {
   if (quantity <= 0) {
     return 'Out of Stock';

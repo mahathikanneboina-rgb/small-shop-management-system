@@ -1,8 +1,8 @@
 'use client';
 
-import React from 'react';
+import { useAuth } from '../../context/AuthContext';
 import Link from 'next/link';
-import { usePathname, useSearchParams } from 'next/navigation';
+import { usePathname, useSearchParams, useRouter } from 'next/navigation';
 
 interface SidebarProps {
   isOpen: boolean;
@@ -34,6 +34,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const currentFeature = searchParams.get('feature');
+  const { profile, logout } = useAuth();
+  const router = useRouter();
 
   return (
     <>
@@ -50,10 +52,25 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
             <span className="shop-subtitle">Management System</span>
           </div>
         </div>
+        {/* User Profile Section */}
+        {profile && (
+          <div className="sidebar-user">
+            <p className="user-name">{profile.name}</p>
+            <p className="user-role">{profile.role}</p>
+            <button className="logout-button" onClick={async () => {
+              await logout();
+              router.push('/login');
+            }}>Logout</button>
+          </div>
+        )}
 
         <nav className="sidebar-nav">
           <div className="nav-section-title">Main Navigation</div>
-          {NAV_ITEMS.map((item) => {
+          {/* Filter items based on role */}
+          {NAV_ITEMS.filter(item => {
+            if (item.label === 'Settings' && profile?.role !== 'owner') return false;
+            return true;
+          }).map((item) => {
             let isActive = false;
             if (item.isWorking) {
               isActive = pathname === item.href;
