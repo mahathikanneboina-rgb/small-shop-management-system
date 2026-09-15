@@ -9,6 +9,8 @@ import {
   Expense,
   SyncQueueItem,
   SyncEntityType,
+  AuditLog,
+  ShopSettings,
 } from '../types';
 
 export const INITIAL_SAMPLE_PRODUCTS: Product[] = [
@@ -23,6 +25,7 @@ export const INITIAL_SAMPLE_PRODUCTS: Product[] = [
     createdAt: new Date(Date.now() - 7 * 86400000).toISOString(),
     updatedAt: new Date(Date.now() - 7 * 86400000).toISOString(),
     syncStatus: 'synced',
+    version: 1,
   },
   {
     id: 'prod-2',
@@ -35,6 +38,7 @@ export const INITIAL_SAMPLE_PRODUCTS: Product[] = [
     createdAt: new Date(Date.now() - 6 * 86400000).toISOString(),
     updatedAt: new Date(Date.now() - 6 * 86400000).toISOString(),
     syncStatus: 'synced',
+    version: 1,
   },
   {
     id: 'prod-3',
@@ -47,6 +51,7 @@ export const INITIAL_SAMPLE_PRODUCTS: Product[] = [
     createdAt: new Date(Date.now() - 5 * 86400000).toISOString(),
     updatedAt: new Date(Date.now() - 1 * 86400000).toISOString(),
     syncStatus: 'synced',
+    version: 1,
   },
   {
     id: 'prod-4',
@@ -59,6 +64,7 @@ export const INITIAL_SAMPLE_PRODUCTS: Product[] = [
     createdAt: new Date(Date.now() - 4 * 86400000).toISOString(),
     updatedAt: new Date(Date.now() - 2 * 86400000).toISOString(),
     syncStatus: 'synced',
+    version: 1,
   },
   {
     id: 'prod-5',
@@ -71,6 +77,7 @@ export const INITIAL_SAMPLE_PRODUCTS: Product[] = [
     createdAt: new Date(Date.now() - 3 * 86400000).toISOString(),
     updatedAt: new Date(Date.now() - 3 * 86400000).toISOString(),
     syncStatus: 'synced',
+    version: 1,
   },
 ];
 
@@ -154,8 +161,19 @@ export const INITIAL_SAMPLE_HISTORY: StockHistory[] = [
   },
 ];
 
+export const DEFAULT_SHOP_SETTINGS: ShopSettings = {
+  id: 'shop_settings',
+  shopName: 'Small Shop Management',
+  shopPhone: '+1 234 567 8900',
+  shopEmail: 'owner@smallshop.com',
+  shopAddress: '123 Market Street, Cityville',
+  currencySymbol: '$',
+  taxRate: 0,
+  updatedAt: new Date().toISOString(),
+};
+
 const DB_NAME = 'small-shop-db';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 export type DBStoreName = SyncEntityType | 'syncQueue';
 
@@ -168,6 +186,8 @@ const ALL_STORES: DBStoreName[] = [
   'expenses',
   'stockHistory',
   'syncQueue',
+  'auditLogs',
+  'settings',
 ];
 
 class IndexedDbService {
@@ -329,6 +349,8 @@ class IndexedDbService {
     suppliers: Supplier[];
     expenses: Expense[];
     syncQueue: SyncQueueItem[];
+    auditLogs: AuditLog[];
+    settings: ShopSettings;
   }> {
     if (!this.isBrowser()) {
       return {
@@ -340,6 +362,8 @@ class IndexedDbService {
         suppliers: [],
         expenses: [],
         syncQueue: [],
+        auditLogs: [],
+        settings: DEFAULT_SHOP_SETTINGS,
       };
     }
 
@@ -351,6 +375,13 @@ class IndexedDbService {
     let suppliers = await this.getAll<Supplier>('suppliers');
     let expenses = await this.getAll<Expense>('expenses');
     let syncQueue = await this.getAll<SyncQueueItem>('syncQueue');
+    let auditLogs = await this.getAll<AuditLog>('auditLogs');
+    let settings = await this.getById<ShopSettings>('settings', 'shop_settings');
+
+    if (!settings) {
+      settings = DEFAULT_SHOP_SETTINGS;
+      await this.put('settings', settings);
+    }
 
     // Check if IndexedDB is completely uninitialized
     if (products.length === 0 && stockHistory.length === 0 && sales.length === 0) {
@@ -439,6 +470,8 @@ class IndexedDbService {
       suppliers,
       expenses,
       syncQueue,
+      auditLogs,
+      settings,
     };
   }
 
@@ -454,9 +487,11 @@ class IndexedDbService {
     await this.clearStore('suppliers');
     await this.clearStore('expenses');
     await this.clearStore('syncQueue');
+    await this.clearStore('auditLogs');
 
     await this.bulkPut('products', INITIAL_SAMPLE_PRODUCTS);
     await this.bulkPut('stockHistory', INITIAL_SAMPLE_HISTORY);
+    await this.put('settings', DEFAULT_SHOP_SETTINGS);
 
     return {
       products: INITIAL_SAMPLE_PRODUCTS,

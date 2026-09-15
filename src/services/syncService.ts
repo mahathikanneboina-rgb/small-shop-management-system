@@ -1,15 +1,49 @@
 // src/services/syncService.ts
 import { firestore } from '../lib/firebase';
-import { doc, setDoc, deleteDoc } from 'firebase/firestore';
-import { SyncQueueItem, SyncStatus, SyncEntityType, SyncOperationType } from '../types';
+import {
+  doc,
+  setDoc,
+  deleteDoc,
+  collection,
+  getDocs,
+  limit,
+  query,
+} from 'firebase/firestore';
+import {
+  SyncQueueItem,
+  SyncStatus,
+  SyncEntityType,
+  SyncOperationType,
+  Product,
+  Sale,
+  Purchase,
+  Customer,
+  Supplier,
+  Expense,
+  StockHistory,
+  AuditLog,
+  ShopSettings,
+} from '../types';
 import { indexedDbService } from './indexedDbService';
 
 type SyncListener = (queue: SyncQueueItem[]) => void;
 type OnlineListener = (isOnline: boolean) => void;
+type RemoteDataListener = (data: {
+  products?: Product[];
+  sales?: Sale[];
+  purchases?: Purchase[];
+  stockHistory?: StockHistory[];
+  expenses?: Expense[];
+  customers?: Customer[];
+  suppliers?: Supplier[];
+  auditLogs?: AuditLog[];
+  settings?: ShopSettings;
+}) => void;
 
 class SyncService {
   private syncListeners: Set<SyncListener> = new Set();
   private onlineListeners: Set<OnlineListener> = new Set();
+  private remoteDataListeners: Set<RemoteDataListener> = new Set();
   private isSyncing = false;
   private online = true;
 
@@ -58,6 +92,21 @@ class SyncService {
     return () => this.syncListeners.delete(listener);
   }
 
+  subscribeRemoteData(listener: RemoteDataListener): () => void {
+    this.remoteDataListeners.add(listener);
+    return () => this.remoteDataListeners.delete(listener);
+  }
+
+  private notifyRemoteData(data: any) {
+    this.remoteDataListeners.forEach((l) => {
+      try {
+        l(data);
+      } catch (e) {
+        console.error('Error notifying remote data:', e);
+      }
+    });
+  }
+
   private async notifyQueueUpdated() {
     try {
       const queue = await this.getQueue();
@@ -79,17 +128,20 @@ class SyncService {
 
   /**
    * Enqueue a local operation into the IndexedDB sync queue.
+   * Preserves the creator's userId and userName for historical audit.
    */
   async enqueue(
     operationId: string,
     entityType: SyncEntityType,
     operationType: SyncOperationType,
     payload: any,
-    userId?: string
+    userId?: string,
+    userName?: string
   ): Promise<SyncQueueItem> {
-    const randomSuffix = typeof crypto !== 'undefined' && crypto.randomUUID
-      ? crypto.randomUUID().substring(0, 8)
-      : Math.random().toString(36).substring(2, 8);
+    const randomSuffix =
+      typeof crypto !== 'undefined' && crypto.randomUUID
+        ? crypto.randomUUID().substring(0, 8)
+        : Math.random().toString(36).substring(2, 8);
 
     const queueItem: SyncQueueItem = {
       id: `sync-${Date.now()}-${randomSuffix}`,
@@ -101,6 +153,7 @@ class SyncService {
       retryCount: 0,
       status: 'pending',
       userId,
+      userName,
     };
 
     await indexedDbService.put('syncQueue', queueItem);
@@ -117,34 +170,33 @@ class SyncService {
   }
 
   /**
-   * Synchronize pending operations with Firestore.
+   * Synchronize pending operations with Firestore (Push & Pull).
+   * Includes conflict detection for multi-device product modifications.
    */
-  async syncPending(): Promise<{ synced: number; failed: number }> {
+  async syncPending(): Promise<{ synced: number; failed: number; conflicts: number }> {
     if (this.isSyncing) {
-      return { synced: 0, failed: 0 };
+      return { synced: 0, failed: 0, conflicts: 0 };
     }
 
     if (!this.isOnline()) {
-      return { synced: 0, failed: 0 };
+      return { synced: 0, failed: 0, conflicts: 0 };
     }
 
     this.isSyncing = true;
     let synced = 0;
     let failed = 0;
+    let conflicts = 0;
 
     try {
+      // 1. PUSH: Process local pending queue operations
       const queue = await this.getQueue();
       const pendingItems = queue.filter(
         (item) => item.status === 'pending' || item.status === 'syncing'
       );
 
       for (const item of pendingItems) {
-        // Double check online status before processing each item
-        if (!this.isOnline()) {
-          break;
-        }
+        if (!this.isOnline()) break;
 
-        // Mark as syncing in local queue
         item.status = 'syncing';
         await indexedDbService.put('syncQueue', item);
         await this.notifyQueueUpdated();
@@ -155,37 +207,144 @@ class SyncService {
           item.errorMessage = undefined;
           await indexedDbService.put('syncQueue', item);
 
-          // Update syncStatus in the local entity store as well
+          // Update syncStatus in local entity store
           await this.updateLocalEntitySyncStatus(item.entityType, item.operationId, 'synced');
           synced++;
         } catch (error: any) {
           console.warn(`Sync failed for item ${item.operationId}:`, error);
-          item.status = 'failed';
+          if (error?.message?.includes('conflict') || error?.code === 'conflict') {
+            item.status = 'conflict';
+            item.conflictDetails = error.message;
+            conflicts++;
+          } else {
+            item.status = 'failed';
+          }
           item.retryCount = (item.retryCount || 0) + 1;
           item.errorMessage = error?.message || 'Failed to synchronize with Firestore';
           await indexedDbService.put('syncQueue', item);
-          await this.updateLocalEntitySyncStatus(item.entityType, item.operationId, 'failed');
+          await this.updateLocalEntitySyncStatus(item.entityType, item.operationId, item.status);
           failed++;
         }
+      }
+
+      // 2. PULL: Pull updates from Firestore to enable multi-device sync
+      if (this.isFirestoreConfigured()) {
+        await this.pullRemoteUpdates();
       }
     } finally {
       this.isSyncing = false;
       await this.notifyQueueUpdated();
     }
 
-    return { synced, failed };
+    return { synced, failed, conflicts };
   }
 
   /**
-   * Reset failed items to pending and retry synchronization.
+   * Pull remote records from Firestore and reconcile locally.
    */
-  async retryFailed(): Promise<{ synced: number; failed: number }> {
+  private async pullRemoteUpdates(): Promise<void> {
+    try {
+      const collectionsToSync: Array<{
+        name: string;
+        store: SyncEntityType;
+      }> = [
+        { name: 'products', store: 'products' },
+        { name: 'sales', store: 'sales' },
+        { name: 'purchases', store: 'purchases' },
+        { name: 'stockHistory', store: 'stockHistory' },
+        { name: 'expenses', store: 'expenses' },
+        { name: 'customers', store: 'customers' },
+        { name: 'suppliers', store: 'suppliers' },
+        { name: 'audit_logs', store: 'auditLogs' },
+      ];
+
+      for (const col of collectionsToSync) {
+        try {
+          const colRef = collection(firestore, col.name);
+          const q = query(colRef, limit(100));
+          const snapshot = await getDocs(q);
+
+          if (!snapshot.empty) {
+            const remoteDocs = snapshot.docs.map((d) => ({ ...d.data(), id: d.id }));
+
+            if (col.store === 'products') {
+              await this.reconcileProducts(remoteDocs as Product[]);
+            } else {
+              // Transactions / History / Audit are immutable records, merge by ID
+              for (const remoteItem of remoteDocs) {
+                const existing = await indexedDbService.getById<any>(col.store, (remoteItem as any).id);
+                if (!existing) {
+                  await indexedDbService.put(col.store, remoteItem as any);
+                }
+              }
+            }
+          }
+        } catch (colErr) {
+          // Non-blocking collection fetch warning (e.g. permission or empty)
+          console.debug(`Pull check on ${col.name}:`, colErr);
+        }
+      }
+    } catch (err) {
+      console.warn('Error during pullRemoteUpdates:', err);
+    }
+  }
+
+  /**
+   * Multi-device product reconciliation and conflict detection.
+   */
+  private async reconcileProducts(remoteProducts: Product[]): Promise<void> {
     const queue = await this.getQueue();
-    const failedItems = queue.filter((item) => item.status === 'failed');
+    const pendingProductIds = new Set(
+      queue
+        .filter((q) => q.entityType === 'products' && (q.status === 'pending' || q.status === 'syncing'))
+        .map((q) => q.operationId)
+    );
+
+    for (const remoteProd of remoteProducts) {
+      const localProd = await indexedDbService.getById<Product>('products', remoteProd.id);
+
+      if (!localProd) {
+        // Product exists on other device, save locally
+        await indexedDbService.put('products', { ...remoteProd, syncStatus: 'synced' });
+      } else if (!pendingProductIds.has(remoteProd.id)) {
+        // No unsynced local changes, accept remote updates
+        await indexedDbService.put('products', { ...remoteProd, syncStatus: 'synced' });
+      } else {
+        // CONFLICT DETECTION: Local product has un-synced operations and remote product has different stock/version
+        if (localProd.quantity !== remoteProd.quantity) {
+          const delta = localProd.quantity - (localProd.version ? remoteProd.quantity : localProd.quantity);
+          const reconciledStock = remoteProd.quantity + delta;
+
+          if (reconciledStock < 0) {
+            // Stock dropped below 0 due to concurrent sales on multiple devices
+            localProd.conflict = true;
+            localProd.conflictDetails = `Stock conflict detected: Remote stock is ${remoteProd.quantity}, local adjustment was ${delta}. Net result is below 0.`;
+            await indexedDbService.put('products', localProd);
+          } else {
+            // Reconcile cleanly
+            localProd.quantity = reconciledStock;
+            localProd.version = (remoteProd.version || 1) + 1;
+            localProd.conflict = false;
+            await indexedDbService.put('products', localProd);
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * Reset failed/conflict items to pending and retry synchronization.
+   */
+  async retryFailed(): Promise<{ synced: number; failed: number; conflicts: number }> {
+    const queue = await this.getQueue();
+    const failedItems = queue.filter(
+      (item) => item.status === 'failed' || item.status === 'conflict'
+    );
 
     for (const item of failedItems) {
       item.status = 'pending';
       item.errorMessage = undefined;
+      item.conflictDetails = undefined;
       await indexedDbService.put('syncQueue', item);
     }
 
@@ -209,15 +368,25 @@ class SyncService {
    */
   private async syncItemToFirestore(item: SyncQueueItem): Promise<void> {
     if (!this.isFirestoreConfigured()) {
-      // In development or test without valid Firebase credentials, simulate success or throw
       if (process.env.NEXT_PUBLIC_FIREBASE_API_KEY) {
-        // Has config but may be mock
         return;
       }
       return;
     }
 
-    const collectionName = item.entityType;
+    const collectionMap: Record<SyncEntityType, string> = {
+      products: 'products',
+      sales: 'sales',
+      purchases: 'purchases',
+      customers: 'customers',
+      suppliers: 'suppliers',
+      expenses: 'expenses',
+      stockHistory: 'stockHistory',
+      auditLogs: 'audit_logs',
+      settings: 'settings',
+    };
+
+    const collectionName = collectionMap[item.entityType] || item.entityType;
     const docRef = doc(firestore, collectionName, item.operationId);
 
     if (item.operationType === 'delete') {
@@ -227,7 +396,9 @@ class SyncService {
         ...item.payload,
         id: item.operationId,
         syncedAt: new Date().toISOString(),
-        lastUpdatedBy: item.userId || 'system',
+        // Always preserve the original creator's userId & userName
+        userId: item.userId || item.payload.userId || 'system',
+        userName: item.userName || item.payload.userName || 'System User',
       });
       await setDoc(docRef, sanitized, { merge: true });
     }

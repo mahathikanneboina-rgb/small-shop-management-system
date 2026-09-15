@@ -24,7 +24,7 @@ export type StockChangeReason =
   | 'Purchase';
 
 // Sync Types
-export type SyncStatus = 'pending' | 'syncing' | 'synced' | 'failed' | 'local_only';
+export type SyncStatus = 'pending' | 'syncing' | 'synced' | 'failed' | 'conflict' | 'local_only';
 
 export type SyncEntityType =
   | 'products'
@@ -33,7 +33,9 @@ export type SyncEntityType =
   | 'customers'
   | 'suppliers'
   | 'expenses'
-  | 'stockHistory';
+  | 'stockHistory'
+  | 'auditLogs'
+  | 'settings';
 
 export type SyncOperationType = 'create' | 'update' | 'delete';
 
@@ -48,6 +50,8 @@ export interface SyncQueueItem {
   status: SyncStatus;
   errorMessage?: string;
   userId?: string;
+  userName?: string;
+  conflictDetails?: string;
 }
 
 export interface Product {
@@ -61,7 +65,11 @@ export interface Product {
   createdAt: string;
   updatedAt: string;
   userId?: string;
+  userName?: string;
   syncStatus?: SyncStatus;
+  version?: number;
+  conflict?: boolean;
+  conflictDetails?: string;
 }
 
 export interface StockHistory {
@@ -76,6 +84,7 @@ export interface StockHistory {
   notes?: string;
   transactionId?: string;
   userId?: string;
+  userName?: string;
   syncStatus?: SyncStatus;
 }
 
@@ -93,6 +102,7 @@ export interface Sale {
   createdAt?: string;
   updatedAt?: string;
   userId?: string;
+  userName?: string;
   syncStatus?: SyncStatus;
 }
 
@@ -109,6 +119,7 @@ export interface Purchase {
   createdAt?: string;
   updatedAt?: string;
   userId?: string;
+  userName?: string;
   syncStatus?: SyncStatus;
 }
 
@@ -124,6 +135,7 @@ export interface Customer {
   createdAt?: string;
   updatedAt?: string;
   userId?: string;
+  userName?: string;
   syncStatus?: SyncStatus;
 }
 
@@ -138,6 +150,7 @@ export interface Supplier {
   createdAt?: string;
   updatedAt?: string;
   userId?: string;
+  userName?: string;
   syncStatus?: SyncStatus;
 }
 
@@ -150,6 +163,7 @@ export interface Expense {
   createdAt?: string;
   updatedAt?: string;
   userId?: string;
+  userName?: string;
   syncStatus?: SyncStatus;
 }
 
@@ -170,13 +184,61 @@ export interface DashboardMetrics {
   totalExpenses: number;
 }
 
-// User profile stored in Firestore
+// User Profile & Roles
+export type UserRole = 'owner' | 'staff';
+export type UserStatus = 'active' | 'disabled';
+
 export interface UserProfile {
   uid: string;
   name: string;
   email: string;
-  role: 'owner' | 'staff';
+  role: UserRole;
+  status: UserStatus;
   createdAt: string;
+  updatedAt?: string;
+}
+
+// Audit Log Types
+export type AuditLogAction =
+  | 'SALE_CREATED'
+  | 'PURCHASE_CREATED'
+  | 'PRODUCT_CREATED'
+  | 'PRODUCT_UPDATED'
+  | 'PRODUCT_DELETED'
+  | 'EXPENSE_CREATED'
+  | 'STAFF_DISABLED'
+  | 'STAFF_REACTIVATED'
+  | 'STAFF_ROLE_CHANGED'
+  | 'SETTINGS_UPDATED'
+  | 'STOCK_CONFLICT_DETECTED'
+  | 'LOGIN'
+  | 'LOGOUT';
+
+export interface AuditLog {
+  id: string; // e.g. "AUDIT-xxxxx"
+  userId: string;
+  userName: string;
+  userEmail?: string;
+  action: AuditLogAction;
+  entityType: string;
+  entityId: string;
+  description: string;
+  timestamp: string;
+  syncStatus?: SyncStatus;
+}
+
+// Shop Settings
+export interface ShopSettings {
+  id: string; // "shop_settings"
+  shopName: string;
+  shopPhone: string;
+  shopEmail: string;
+  shopAddress: string;
+  currencySymbol: string;
+  taxRate: number;
+  updatedAt: string;
+  updatedBy?: string;
+  syncStatus?: SyncStatus;
 }
 
 export function calculateStockStatus(quantity: number, minStock: number): StockStatus {
@@ -194,8 +256,9 @@ export function calculateStockStatus(quantity: number, minStock: number): StockS
  * e.g., generateTransactionId('SALE') -> 'SALE-a1b2c3d4-e5f6'
  */
 export function generateTransactionId(prefix: string): string {
-  const randomPart = typeof crypto !== 'undefined' && crypto.randomUUID
-    ? crypto.randomUUID().replace(/-/g, '').substring(0, 12)
-    : `${Date.now().toString(36)}${Math.random().toString(36).substring(2, 8)}`;
+  const randomPart =
+    typeof crypto !== 'undefined' && crypto.randomUUID
+      ? crypto.randomUUID().replace(/-/g, '').substring(0, 12)
+      : `${Date.now().toString(36)}${Math.random().toString(36).substring(2, 8)}`;
   return `${prefix.toUpperCase()}-${randomPart}`;
 }

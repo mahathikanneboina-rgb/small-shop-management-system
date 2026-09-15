@@ -19,10 +19,13 @@ import {
   Supplier,
   Expense,
   SyncQueueItem,
+  AuditLog,
+  ShopSettings,
   generateTransactionId,
 } from '../types';
-import { indexedDbService } from '../services/indexedDbService';
+import { indexedDbService, DEFAULT_SHOP_SETTINGS } from '../services/indexedDbService';
 import { syncService } from '../services/syncService';
+import { auditService } from '../services/auditService';
 import { useAuth } from './AuthContext';
 
 export interface ToastMessage {
@@ -40,6 +43,8 @@ interface ShopContextType {
   suppliers: Supplier[];
   expenses: Expense[];
   syncQueue: SyncQueueItem[];
+  auditLogs: AuditLog[];
+  settings: ShopSettings;
   isOnline: boolean;
   isSyncing: boolean;
   metrics: DashboardMetrics;
@@ -75,6 +80,7 @@ interface ShopContextType {
     notes?: string
   ) => boolean;
   recordExpense: (expense: Omit<Expense, 'id'>) => Expense;
+  updateSettings: (newSettings: ShopSettings) => Promise<void>;
   syncNow: () => Promise<void>;
   retryFailedSync: () => Promise<void>;
 }
@@ -82,8 +88,9 @@ interface ShopContextType {
 const ShopContext = createContext<ShopContextType | undefined>(undefined);
 
 export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { user } = useAuth();
+  const { user, profile, isDisabled } = useAuth();
   const currentUserId = user?.uid;
+  const currentUserName = profile?.name || user?.email || 'Store User';
 
   const [products, setProducts] = useState<Product[]>([]);
   const [stockHistory, setStockHistory] = useState<StockHistory[]>([]);
@@ -93,6 +100,8 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [syncQueue, setSyncQueue] = useState<SyncQueueItem[]>([]);
+  const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
+  const [settings, setSettings] = useState<ShopSettings>(DEFAULT_SHOP_SETTINGS);
   const [isOnline, setIsOnline] = useState<boolean>(true);
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -126,6 +135,8 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setSuppliers(data.suppliers);
           setExpenses(data.expenses);
           setSyncQueue(data.syncQueue);
+          setAuditLogs(data.auditLogs);
+          setSettings(data.settings);
         }
       } catch (err) {
         console.error('Failed to initialize local IndexedDB storage:', err);
@@ -147,10 +158,14 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
 
     // Subscribe to sync queue changes
-    const unsubQueue = syncService.subscribeSyncQueue((queue) => {
+    const unsubQueue = syncService.subscribeSyncQueue(async (queue) => {
       if (mounted) {
         setSyncQueue(queue);
         setIsSyncing(queue.some((item) => item.status === 'syncing'));
+
+        // Refresh audit logs
+        const updatedLogs = await indexedDbService.getAll<AuditLog>('auditLogs');
+        setAuditLogs(updatedLogs.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()));
       }
     });
 
@@ -217,6 +232,11 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const addProduct = useCallback(
     (productData: Omit<Product, 'id' | 'createdAt' | 'updatedAt'>): Product => {
+      if (isDisabled) {
+        showToast('error', 'Your account is disabled. Cannot modify products.');
+        throw new Error('Account disabled');
+      }
+
       const now = new Date().toISOString();
       const productId = generateTransactionId('PROD');
       const newProduct: Product = {
@@ -225,7 +245,9 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
         createdAt: now,
         updatedAt: now,
         userId: currentUserId,
+        userName: currentUserName,
         syncStatus: 'pending',
+        version: 1,
       };
 
       // 1. Update React state immediately
@@ -238,7 +260,14 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
 
       // 3. Queue cloud sync
-      syncService.enqueue(newProduct.id, 'products', 'create', newProduct, currentUserId);
+      syncService.enqueue(
+        newProduct.id,
+        'products',
+        'create',
+        newProduct,
+        currentUserId,
+        currentUserName
+      );
 
       // 4. Record Initial Stock in history if quantity > 0
       if (newProduct.quantity > 0) {
@@ -254,13 +283,30 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
           timestamp: now,
           transactionId: newProduct.id,
           userId: currentUserId,
+          userName: currentUserName,
           syncStatus: 'pending',
         };
 
         setStockHistory((prev) => [historyEntry, ...prev]);
         indexedDbService.put('stockHistory', historyEntry);
-        syncService.enqueue(historyEntry.id, 'stockHistory', 'create', historyEntry, currentUserId);
+        syncService.enqueue(
+          historyEntry.id,
+          'stockHistory',
+          'create',
+          historyEntry,
+          currentUserId,
+          currentUserName
+        );
       }
+
+      // 5. Audit Log
+      auditService.log(
+        'PRODUCT_CREATED',
+        'product',
+        newProduct.id,
+        `Created product ${newProduct.name} (Qty: ${newProduct.quantity})`,
+        { uid: currentUserId || 'system', name: currentUserName, email: user?.email || undefined }
+      );
 
       showToast(
         'success',
@@ -270,7 +316,7 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
       );
       return newProduct;
     },
-    [products, currentUserId, isOnline, showToast]
+    [products, currentUserId, currentUserName, user?.email, isDisabled, isOnline, showToast]
   );
 
   const updateProduct = useCallback(
@@ -279,6 +325,11 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
       updates: Partial<Omit<Product, 'id' | 'createdAt' | 'updatedAt'>>,
       reason: StockChangeReason = 'Stock Correction'
     ) => {
+      if (isDisabled) {
+        showToast('error', 'Your account is disabled. Cannot modify products.');
+        return;
+      }
+
       const target = products.find((p) => p.id === id);
       if (!target) {
         showToast('error', 'Product not found');
@@ -295,6 +346,7 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
         ...updates,
         updatedAt: now,
         syncStatus: 'pending',
+        version: (target.version || 1) + 1,
       };
 
       // 1. Update React state immediately
@@ -305,7 +357,14 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
       indexedDbService.put('products', updatedProduct);
 
       // 3. Queue cloud sync
-      syncService.enqueue(updatedProduct.id, 'products', 'update', updatedProduct, currentUserId);
+      syncService.enqueue(
+        updatedProduct.id,
+        'products',
+        'update',
+        updatedProduct,
+        currentUserId,
+        currentUserName
+      );
 
       // 4. Log stock history if quantity changed
       if (qtyChanged !== 0) {
@@ -321,13 +380,30 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
           timestamp: now,
           transactionId: updatedProduct.id,
           userId: currentUserId,
+          userName: currentUserName,
           syncStatus: 'pending',
         };
 
         setStockHistory((prev) => [historyEntry, ...prev]);
         indexedDbService.put('stockHistory', historyEntry);
-        syncService.enqueue(historyEntry.id, 'stockHistory', 'create', historyEntry, currentUserId);
+        syncService.enqueue(
+          historyEntry.id,
+          'stockHistory',
+          'create',
+          historyEntry,
+          currentUserId,
+          currentUserName
+        );
       }
+
+      // 5. Audit Log
+      auditService.log(
+        'PRODUCT_UPDATED',
+        'product',
+        id,
+        `Updated product ${updatedProduct.name}${qtyChanged !== 0 ? ` (Qty changed by ${qtyChanged})` : ''}`,
+        { uid: currentUserId || 'system', name: currentUserName, email: user?.email || undefined }
+      );
 
       showToast(
         'success',
@@ -336,7 +412,7 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
           : `Product "${updatedProduct.name}" updated locally (offline)`
       );
     },
-    [products, currentUserId, isOnline, showToast]
+    [products, currentUserId, currentUserName, user?.email, isDisabled, isOnline, showToast]
   );
 
   const adjustStock = useCallback(
@@ -346,6 +422,11 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
       reason: StockChangeReason,
       notes?: string
     ): boolean => {
+      if (isDisabled) {
+        showToast('error', 'Your account is disabled. Cannot adjust stock.');
+        return false;
+      }
+
       const target = products.find((p) => p.id === productId);
       if (!target) {
         showToast('error', 'Product not found');
@@ -364,13 +445,21 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
         quantity: newQty,
         updatedAt: now,
         syncStatus: 'pending',
+        version: (target.version || 1) + 1,
       };
 
       // Update state
       const updatedList = products.map((p) => (p.id === productId ? updatedProduct : p));
       setProducts(updatedList);
       indexedDbService.put('products', updatedProduct);
-      syncService.enqueue(updatedProduct.id, 'products', 'update', updatedProduct, currentUserId);
+      syncService.enqueue(
+        updatedProduct.id,
+        'products',
+        'update',
+        updatedProduct,
+        currentUserId,
+        currentUserName
+      );
 
       // Stock history
       const histId = generateTransactionId('HIST');
@@ -386,12 +475,29 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
         timestamp: now,
         transactionId: histId,
         userId: currentUserId,
+        userName: currentUserName,
         syncStatus: 'pending',
       };
 
       setStockHistory((prev) => [historyEntry, ...prev]);
       indexedDbService.put('stockHistory', historyEntry);
-      syncService.enqueue(historyEntry.id, 'stockHistory', 'create', historyEntry, currentUserId);
+      syncService.enqueue(
+        historyEntry.id,
+        'stockHistory',
+        'create',
+        historyEntry,
+        currentUserId,
+        currentUserName
+      );
+
+      // Audit Log
+      auditService.log(
+        'PRODUCT_UPDATED',
+        'product',
+        target.id,
+        `Adjusted stock for ${target.name} (${delta > 0 ? `+${delta}` : delta}) - Reason: ${reason}`,
+        { uid: currentUserId || 'system', name: currentUserName, email: user?.email || undefined }
+      );
 
       showToast(
         'success',
@@ -400,22 +506,35 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       return true;
     },
-    [products, currentUserId, showToast]
+    [products, currentUserId, currentUserName, user?.email, isDisabled, showToast]
   );
 
   const deleteProduct = useCallback(
     (id: string) => {
+      if (isDisabled) {
+        showToast('error', 'Your account is disabled. Cannot delete products.');
+        return;
+      }
+
       const target = products.find((p) => p.id === id);
       if (!target) return;
 
       const updatedList = products.filter((p) => p.id !== id);
       setProducts(updatedList);
       indexedDbService.delete('products', id);
-      syncService.enqueue(id, 'products', 'delete', { id }, currentUserId);
+      syncService.enqueue(id, 'products', 'delete', { id }, currentUserId, currentUserName);
+
+      auditService.log(
+        'PRODUCT_DELETED',
+        'product',
+        id,
+        `Deleted product ${target.name}`,
+        { uid: currentUserId || 'system', name: currentUserName, email: user?.email || undefined }
+      );
 
       showToast('info', `Product "${target.name}" deleted`);
     },
-    [products, currentUserId, showToast]
+    [products, currentUserId, currentUserName, user?.email, isDisabled, showToast]
   );
 
   const resetSampleData = useCallback(async () => {
@@ -429,6 +548,8 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setCustomers([]);
       setSuppliers([]);
       setSyncQueue([]);
+      setAuditLogs([]);
+      setSettings(DEFAULT_SHOP_SETTINGS);
       showToast('success', 'Reset data to sample products');
     } catch (err) {
       console.error('Failed to reset sample data:', err);
@@ -443,7 +564,7 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
     [products]
   );
 
-  // Record a sale transaction (Local-First + Sync)
+  // Record a sale transaction (Local-First + Sync + Audit)
   const recordSale = useCallback(
     (
       productId: string,
@@ -451,6 +572,11 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
       paymentMethod: 'Cash' | 'UPI' | 'Credit',
       notes?: string
     ) => {
+      if (isDisabled) {
+        showToast('error', 'Your staff account is disabled. Cannot record sales.');
+        return false;
+      }
+
       // 1. Validate sale
       const product = products.find((p) => p.id === productId);
       if (!product) {
@@ -481,6 +607,7 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
         quantity: newStockQuantity,
         updatedAt: now,
         syncStatus: 'pending',
+        version: (product.version || 1) + 1,
       };
 
       // 4. Construct sale record
@@ -497,6 +624,7 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
         createdAt: now,
         updatedAt: now,
         userId: currentUserId,
+        userName: currentUserName,
         syncStatus: 'pending',
       };
 
@@ -513,6 +641,7 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
         timestamp: now,
         transactionId: saleId,
         userId: currentUserId,
+        userName: currentUserName,
         syncStatus: 'pending',
       };
 
@@ -527,11 +656,41 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
       indexedDbService.put('stockHistory', historyEntry);
 
       // 8. Add sync operations to syncQueue
-      syncService.enqueue(saleEntry.id, 'sales', 'create', saleEntry, currentUserId);
-      syncService.enqueue(updatedProduct.id, 'products', 'update', updatedProduct, currentUserId);
-      syncService.enqueue(historyEntry.id, 'stockHistory', 'create', historyEntry, currentUserId);
+      syncService.enqueue(
+        saleEntry.id,
+        'sales',
+        'create',
+        saleEntry,
+        currentUserId,
+        currentUserName
+      );
+      syncService.enqueue(
+        updatedProduct.id,
+        'products',
+        'update',
+        updatedProduct,
+        currentUserId,
+        currentUserName
+      );
+      syncService.enqueue(
+        historyEntry.id,
+        'stockHistory',
+        'create',
+        historyEntry,
+        currentUserId,
+        currentUserName
+      );
 
-      // 9. Inform user
+      // 9. Audit Log
+      auditService.log(
+        'SALE_CREATED',
+        'sale',
+        saleId,
+        `Recorded sale of ${product.name} (Qty: ${quantity}, Amount: $${totalAmount.toFixed(2)}, Pay: ${paymentMethod})`,
+        { uid: currentUserId || 'system', name: currentUserName, email: user?.email || undefined }
+      );
+
+      // 10. Inform user
       showToast(
         'success',
         isOnline
@@ -541,10 +700,10 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       return true;
     },
-    [products, currentUserId, isOnline, showToast]
+    [products, currentUserId, currentUserName, user?.email, isDisabled, isOnline, showToast]
   );
 
-  // Record a purchase transaction (Local-First + Sync)
+  // Record a purchase transaction (Local-First + Sync + Audit)
   const recordPurchase = useCallback(
     (
       productId: string,
@@ -552,6 +711,11 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
       supplierName: string,
       notes?: string
     ) => {
+      if (isDisabled) {
+        showToast('error', 'Your staff account is disabled. Cannot record purchases.');
+        return false;
+      }
+
       // 1. Validate purchase
       const product = products.find((p) => p.id === productId);
       if (!product) {
@@ -582,6 +746,7 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
         quantity: newStockQuantity,
         updatedAt: now,
         syncStatus: 'pending',
+        version: (product.version || 1) + 1,
       };
 
       // 4. Construct purchase record
@@ -598,6 +763,7 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
         createdAt: now,
         updatedAt: now,
         userId: currentUserId,
+        userName: currentUserName,
         syncStatus: 'pending',
       };
 
@@ -614,6 +780,7 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
         timestamp: now,
         transactionId: purchaseId,
         userId: currentUserId,
+        userName: currentUserName,
         syncStatus: 'pending',
       };
 
@@ -628,11 +795,41 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
       indexedDbService.put('stockHistory', historyEntry);
 
       // 8. Add sync operations to syncQueue
-      syncService.enqueue(purchaseEntry.id, 'purchases', 'create', purchaseEntry, currentUserId);
-      syncService.enqueue(updatedProduct.id, 'products', 'update', updatedProduct, currentUserId);
-      syncService.enqueue(historyEntry.id, 'stockHistory', 'create', historyEntry, currentUserId);
+      syncService.enqueue(
+        purchaseEntry.id,
+        'purchases',
+        'create',
+        purchaseEntry,
+        currentUserId,
+        currentUserName
+      );
+      syncService.enqueue(
+        updatedProduct.id,
+        'products',
+        'update',
+        updatedProduct,
+        currentUserId,
+        currentUserName
+      );
+      syncService.enqueue(
+        historyEntry.id,
+        'stockHistory',
+        'create',
+        historyEntry,
+        currentUserId,
+        currentUserName
+      );
 
-      // 9. Inform user
+      // 9. Audit Log
+      auditService.log(
+        'PURCHASE_CREATED',
+        'purchase',
+        purchaseId,
+        `Recorded purchase of ${product.name} (+${quantity}, Total: $${totalAmount.toFixed(2)}, Supplier: ${supplierName})`,
+        { uid: currentUserId || 'system', name: currentUserName, email: user?.email || undefined }
+      );
+
+      // 10. Inform user
       showToast(
         'success',
         isOnline
@@ -642,12 +839,17 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       return true;
     },
-    [products, currentUserId, isOnline, showToast]
+    [products, currentUserId, currentUserName, user?.email, isDisabled, isOnline, showToast]
   );
 
-  // Record an expense transaction (Local-First + Sync)
+  // Record an expense transaction (Local-First + Sync + Audit)
   const recordExpense = useCallback(
     (expense: Omit<Expense, 'id'>) => {
+      if (isDisabled) {
+        showToast('error', 'Your staff account is disabled. Cannot record expenses.');
+        throw new Error('Account disabled');
+      }
+
       const now = new Date().toISOString();
       const expenseId = generateTransactionId('EXPENSE');
 
@@ -657,12 +859,28 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
         createdAt: now,
         updatedAt: now,
         userId: currentUserId,
+        userName: currentUserName,
         syncStatus: 'pending',
       };
 
       setExpenses((prev) => [newExp, ...prev]);
       indexedDbService.put('expenses', newExp);
-      syncService.enqueue(newExp.id, 'expenses', 'create', newExp, currentUserId);
+      syncService.enqueue(
+        newExp.id,
+        'expenses',
+        'create',
+        newExp,
+        currentUserId,
+        currentUserName
+      );
+
+      auditService.log(
+        'EXPENSE_CREATED',
+        'expense',
+        expenseId,
+        `Recorded expense: ${newExp.category} ($${newExp.amount.toFixed(2)})`,
+        { uid: currentUserId || 'system', name: currentUserName, email: user?.email || undefined }
+      );
 
       showToast(
         'success',
@@ -673,7 +891,39 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       return newExp;
     },
-    [currentUserId, isOnline, showToast]
+    [currentUserId, currentUserName, user?.email, isDisabled, isOnline, showToast]
+  );
+
+  const updateSettings = useCallback(
+    async (newSettings: ShopSettings) => {
+      const now = new Date().toISOString();
+      const updated: ShopSettings = {
+        ...newSettings,
+        updatedAt: now,
+        updatedBy: currentUserId,
+        syncStatus: 'pending',
+      };
+
+      setSettings(updated);
+      await indexedDbService.put('settings', updated);
+      await syncService.enqueue(
+        updated.id,
+        'settings',
+        'update',
+        updated,
+        currentUserId,
+        currentUserName
+      );
+
+      await auditService.log(
+        'SETTINGS_UPDATED',
+        'settings',
+        updated.id,
+        `Shop settings updated by ${currentUserName}`,
+        { uid: currentUserId || 'system', name: currentUserName, email: user?.email || undefined }
+      );
+    },
+    [currentUserId, currentUserName, user?.email]
   );
 
   const syncNow = useCallback(async () => {
@@ -684,7 +934,12 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
     showToast('info', 'Synchronizing data with cloud...');
     try {
       const result = await syncService.syncPending();
-      if (result.failed > 0) {
+      if (result.conflicts > 0) {
+        showToast(
+          'warning',
+          `Sync finished with ${result.conflicts} stock conflict(s) detected. Please review affected products.`
+        );
+      } else if (result.failed > 0) {
         showToast(
           'warning',
           `Sync completed: ${result.synced} succeeded, ${result.failed} failed and will be retried.`
@@ -731,6 +986,8 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
         suppliers,
         expenses,
         syncQueue,
+        auditLogs,
+        settings,
         isOnline,
         isSyncing,
         metrics,
@@ -747,6 +1004,7 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
         recordSale,
         recordPurchase,
         recordExpense,
+        updateSettings,
         syncNow,
         retryFailedSync,
       }}

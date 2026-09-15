@@ -16,21 +16,23 @@ interface NavItemDef {
   icon: string;
   isWorking: boolean;
   featureKey?: string;
-  badge?: string;
+  ownerOnly?: boolean;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const currentFeature = searchParams.get('feature');
-  const { profile, logout } = useAuth();
+  const { profile, logout, isOwner, isDisabled } = useAuth();
   const { syncQueue } = useShop();
   const router = useRouter();
 
   const pendingCount = syncQueue.filter(
     (item) => item.status === 'pending' || item.status === 'syncing'
   ).length;
-  const failedCount = syncQueue.filter((item) => item.status === 'failed').length;
+  const failedCount = syncQueue.filter(
+    (item) => item.status === 'failed' || item.status === 'conflict'
+  ).length;
 
   const NAV_ITEMS: NavItemDef[] = [
     { label: 'Dashboard', href: '/', icon: '📊', isWorking: true },
@@ -42,8 +44,10 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
     { label: 'Expenses', href: '/coming-soon?feature=Expenses', icon: '💸', isWorking: false, featureKey: 'Expenses' },
     { label: 'Stock History', href: '/stock-history', icon: '📜', isWorking: true },
     { label: 'Sync Status', href: '/sync-status', icon: '🔄', isWorking: true },
+    { label: 'Staff Management', href: '/staff', icon: '👥', isWorking: true, ownerOnly: true },
+    { label: 'Audit Log', href: '/audit-log', icon: '🛡️', isWorking: true, ownerOnly: true },
     { label: 'Reports', href: '/coming-soon?feature=Reports', icon: '📈', isWorking: false, featureKey: 'Reports' },
-    { label: 'Settings', href: '/coming-soon?feature=Settings', icon: '⚙️', isWorking: false, featureKey: 'Settings' },
+    { label: 'Settings', href: '/settings', icon: '⚙️', isWorking: true, ownerOnly: true },
   ];
 
   return (
@@ -61,11 +65,21 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
             <span className="shop-subtitle">Management System</span>
           </div>
         </div>
+
         {/* User Profile Section */}
         {profile && (
           <div className="sidebar-user">
-            <p className="user-name">{profile.name}</p>
-            <p className="user-role">{profile.role}</p>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <p className="user-name">{profile.name}</p>
+              <span className={`sync-badge ${isOwner ? 'badge-synced' : 'badge-syncing'}`} style={{ fontSize: '0.65rem' }}>
+                {isOwner ? 'Owner' : 'Staff'}
+              </span>
+            </div>
+            {isDisabled && (
+              <div style={{ marginTop: '4px', fontSize: '0.72rem', color: '#f87171', fontWeight: 600 }}>
+                ⛔ Account Disabled
+              </div>
+            )}
             <button
               className="logout-button"
               onClick={async () => {
@@ -79,10 +93,13 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
         )}
 
         <nav className="sidebar-nav">
-          <div className="nav-section-title">Main Navigation</div>
+          <div className="nav-section-title">
+            {isOwner ? 'Store Owner Navigation' : 'Staff Navigation'}
+          </div>
+
           {/* Filter items based on role */}
           {NAV_ITEMS.filter((item) => {
-            if (item.label === 'Settings' && profile?.role !== 'owner') return false;
+            if (item.ownerOnly && !isOwner) return false;
             return true;
           }).map((item) => {
             let isActive = false;
@@ -121,8 +138,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
         </nav>
 
         <div className="sidebar-footer">
-          <span>Phase 6 Offline-First</span>
-          <span className="sidebar-version">v1.1.0</span>
+          <span>Phase 7 Enterprise Sync</span>
+          <span className="sidebar-version">v1.2.0</span>
         </div>
       </aside>
     </>

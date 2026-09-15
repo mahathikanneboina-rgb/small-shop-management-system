@@ -1,0 +1,122 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ==========================================
+    // HELPER FUNCTIONS
+    // ==========================================
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isOwner() {
+      return isAuthenticated() && getUserData().role == 'owner';
+    }
+
+    function isActive() {
+      return isAuthenticated() && getUserData().status == 'active';
+    }
+
+    // ==========================================
+    // USERS COLLECTION & STAFF AUTHORIZATION
+    // ==========================================
+    match /users/{userId} {
+      // Users can read their own profile; Owners can view all staff
+      allow read: if isAuthenticated() && (request.auth.uid == userId || isOwner());
+
+      // Public registration: strictly staff role and active status
+      allow create: if isAuthenticated() 
+        && request.auth.uid == userId
+        && request.resource.data.role == 'staff'
+        && request.resource.data.status == 'active';
+
+      // Updates:
+      // - Owners can update status and roles
+      // - Regular staff can only edit their own name (role and status must remain unchanged)
+      allow update: if isAuthenticated() && (
+        isOwner() || (
+          request.auth.uid == userId
+          && request.resource.data.role == resource.data.role
+          && request.resource.data.status == resource.data.status
+        )
+      );
+
+      // Deletions are forbidden; accounts are deactivated via status = 'disabled'
+      allow delete: if false;
+    }
+
+    // ==========================================
+    // PRODUCTS & INVENTORY
+    // ==========================================
+    match /products/{productId} {
+      allow read: if isAuthenticated() && isActive();
+      allow create, update: if isAuthenticated() && isActive();
+      allow delete: if isOwner() && isActive();
+    }
+
+    // ==========================================
+    // TRANSACTIONS & STOCK HISTORY
+    // ==========================================
+    match /sales/{saleId} {
+      allow read: if isAuthenticated() && isActive();
+      allow create, update: if isAuthenticated() && isActive();
+      allow delete: if isOwner() && isActive();
+    }
+
+    match /purchases/{purchaseId} {
+      allow read: if isAuthenticated() && isActive();
+      allow create, update: if isAuthenticated() && isActive();
+      allow delete: if isOwner() && isActive();
+    }
+
+    match /stockHistory/{historyId} {
+      allow read: if isAuthenticated() && isActive();
+      allow create: if isAuthenticated() && isActive();
+      // Historical stock audit logs are immutable
+      allow update, delete: if false;
+    }
+
+    match /expenses/{expenseId} {
+      allow read: if isAuthenticated() && isActive();
+      allow create, update: if isAuthenticated() && isActive();
+      allow delete: if isOwner() && isActive();
+    }
+
+    // ==========================================
+    // CUSTOMERS & SUPPLIERS
+    // ==========================================
+    match /customers/{customerId} {
+      allow read: if isAuthenticated() && isActive();
+      allow create, update: if isAuthenticated() && isActive();
+      allow delete: if isOwner() && isActive();
+    }
+
+    match /suppliers/{supplierId} {
+      allow read: if isAuthenticated() && isActive();
+      allow create, update: if isAuthenticated() && isActive();
+      allow delete: if isOwner() && isActive();
+    }
+
+    // ==========================================
+    // AUDIT LOGS (Owner-only Read, Append-only)
+    // ==========================================
+    match /audit_logs/{logId} {
+      allow read: if isOwner() && isActive();
+      allow create: if isAuthenticated() && isActive();
+      allow update, delete: if false;
+    }
+
+    // ==========================================
+    // SHOP SETTINGS (Owner-only Write)
+    // ==========================================
+    match /settings/{settingId} {
+      allow read: if isAuthenticated() && isActive();
+      allow write: if isOwner() && isActive();
+    }
+  }
+}

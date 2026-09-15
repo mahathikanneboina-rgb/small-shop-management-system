@@ -27,6 +27,12 @@ export const Header: React.FC<HeaderProps> = ({ onToggleSidebar }) => {
         return 'Stock History Log';
       case '/sync-status':
         return 'Sync & Storage Status';
+      case '/staff':
+        return 'Staff & User Management';
+      case '/audit-log':
+        return 'Security & Audit Log';
+      case '/settings':
+        return 'Shop Settings & Configuration';
       case '/coming-soon':
         return 'Module Status';
       default:
@@ -45,7 +51,9 @@ export const Header: React.FC<HeaderProps> = ({ onToggleSidebar }) => {
     (item) => item.status === 'pending' || item.status === 'syncing'
   ).length;
 
-  const failedCount = syncQueue.filter((item) => item.status === 'failed').length;
+  const failedCount = syncQueue.filter(
+    (item) => item.status === 'failed' || item.status === 'conflict'
+  ).length;
 
   return (
     <header className="app-header">
@@ -78,7 +86,7 @@ export const Header: React.FC<HeaderProps> = ({ onToggleSidebar }) => {
           ) : failedCount > 0 ? (
             <>
               <span>⚠️</span>
-              <span>{failedCount} Failed</span>
+              <span>{failedCount} Alert</span>
             </>
           ) : pendingCount > 0 ? (
             <>

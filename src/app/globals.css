@@ -1262,3 +1262,88 @@ body {
   color: #b91c1c;
 }
 
+/* ==================================================
+   PHASE 7: ROLE GUARD & MULTI-USER STYLES
+   ================================================== */
+
+.guard-loading-wrapper {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 80px 20px;
+  color: var(--text-secondary);
+  gap: 12px;
+}
+
+.guard-denied-card {
+  max-width: 520px;
+  margin: 60px auto;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  padding: 40px 32px;
+  text-align: center;
+  box-shadow: var(--shadow-md);
+}
+
+.guard-denied-card.disabled-card {
+  border-color: #fecaca;
+  background: #fffafa;
+}
+
+.guard-icon {
+  font-size: 3rem;
+  margin-bottom: 16px;
+}
+
+.guard-denied-card h2 {
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 10px;
+}
+
+.guard-denied-card p {
+  color: var(--text-secondary);
+  font-size: 0.92rem;
+  margin-bottom: 16px;
+  line-height: 1.5;
+}
+
+.guard-note {
+  background: var(--bg-app);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 12px;
+  font-size: 0.84rem !important;
+  color: var(--text-muted) !important;
+  margin-bottom: 24px !important;
+}
+
+.btn-sm {
+  padding: 4px 10px;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.btn-danger {
+  background: #ef4444;
+  color: white;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.btn-danger:hover {
+  background: #dc2626;
+}
+
+.filter-select {
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+
