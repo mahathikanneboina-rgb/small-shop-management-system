@@ -1,6 +1,7 @@
 'use client';
 
 import { useAuth } from '../../context/AuthContext';
+import { useShop } from '../../context/ShopContext';
 import Link from 'next/link';
 import { usePathname, useSearchParams, useRouter } from 'next/navigation';
 
@@ -15,27 +16,35 @@ interface NavItemDef {
   icon: string;
   isWorking: boolean;
   featureKey?: string;
+  badge?: string;
 }
-
-const NAV_ITEMS: NavItemDef[] = [
-  { label: 'Dashboard', href: '/', icon: '📊', isWorking: true },
-  { label: 'Products', href: '/products', icon: '📦', isWorking: true },
-  { label: 'Sales', href: '/sales', icon: '🛒', isWorking: true },
-  { label: 'Purchases', href: '/purchases', icon: '📥', isWorking: true },
-  { label: 'Customers', href: '/coming-soon?feature=Customers', icon: '👥', isWorking: false, featureKey: 'Customers' },
-  { label: 'Suppliers', href: '/coming-soon?feature=Suppliers', icon: '🏭', isWorking: false, featureKey: 'Suppliers' },
-  { label: 'Expenses', href: '/coming-soon?feature=Expenses', icon: '💸', isWorking: false, featureKey: 'Expenses' },
-  { label: 'Stock History', href: '/stock-history', icon: '📜', isWorking: true },
-  { label: 'Reports', href: '/coming-soon?feature=Reports', icon: '📈', isWorking: false, featureKey: 'Reports' },
-  { label: 'Settings', href: '/coming-soon?feature=Settings', icon: '⚙️', isWorking: false, featureKey: 'Settings' },
-];
 
 export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const currentFeature = searchParams.get('feature');
   const { profile, logout } = useAuth();
+  const { syncQueue } = useShop();
   const router = useRouter();
+
+  const pendingCount = syncQueue.filter(
+    (item) => item.status === 'pending' || item.status === 'syncing'
+  ).length;
+  const failedCount = syncQueue.filter((item) => item.status === 'failed').length;
+
+  const NAV_ITEMS: NavItemDef[] = [
+    { label: 'Dashboard', href: '/', icon: '📊', isWorking: true },
+    { label: 'Products', href: '/products', icon: '📦', isWorking: true },
+    { label: 'Sales', href: '/sales', icon: '🛒', isWorking: true },
+    { label: 'Purchases', href: '/purchases', icon: '📥', isWorking: true },
+    { label: 'Customers', href: '/coming-soon?feature=Customers', icon: '👥', isWorking: false, featureKey: 'Customers' },
+    { label: 'Suppliers', href: '/coming-soon?feature=Suppliers', icon: '🏭', isWorking: false, featureKey: 'Suppliers' },
+    { label: 'Expenses', href: '/coming-soon?feature=Expenses', icon: '💸', isWorking: false, featureKey: 'Expenses' },
+    { label: 'Stock History', href: '/stock-history', icon: '📜', isWorking: true },
+    { label: 'Sync Status', href: '/sync-status', icon: '🔄', isWorking: true },
+    { label: 'Reports', href: '/coming-soon?feature=Reports', icon: '📈', isWorking: false, featureKey: 'Reports' },
+    { label: 'Settings', href: '/coming-soon?feature=Settings', icon: '⚙️', isWorking: false, featureKey: 'Settings' },
+  ];
 
   return (
     <>
@@ -57,17 +66,22 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
           <div className="sidebar-user">
             <p className="user-name">{profile.name}</p>
             <p className="user-role">{profile.role}</p>
-            <button className="logout-button" onClick={async () => {
-              await logout();
-              router.push('/login');
-            }}>Logout</button>
+            <button
+              className="logout-button"
+              onClick={async () => {
+                await logout();
+                router.push('/login');
+              }}
+            >
+              Logout
+            </button>
           </div>
         )}
 
         <nav className="sidebar-nav">
           <div className="nav-section-title">Main Navigation</div>
           {/* Filter items based on role */}
-          {NAV_ITEMS.filter(item => {
+          {NAV_ITEMS.filter((item) => {
             if (item.label === 'Settings' && profile?.role !== 'owner') return false;
             return true;
           }).map((item) => {
@@ -84,7 +98,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
                 href={item.href}
                 className={`nav-item ${isActive ? 'active' : ''}`}
                 onClick={() => {
-                  if (window.innerWidth <= 900) {
+                  if (typeof window !== 'undefined' && window.innerWidth <= 900) {
                     onClose();
                   }
                 }}
@@ -94,14 +108,21 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
                   <span>{item.label}</span>
                 </div>
                 {!item.isWorking && <span className="badge-coming-soon">Soon</span>}
+                {item.label === 'Sync Status' && (pendingCount > 0 || failedCount > 0) && (
+                  <span
+                    className={`sync-nav-badge ${failedCount > 0 ? 'badge-failed' : 'badge-pending'}`}
+                  >
+                    {failedCount > 0 ? `! ${failedCount}` : pendingCount}
+                  </span>
+                )}
               </Link>
             );
           })}
         </nav>
 
         <div className="sidebar-footer">
-          <span>Phase 1 Build</span>
-          <span className="sidebar-version">v1.0.0</span>
+          <span>Phase 6 Offline-First</span>
+          <span className="sidebar-version">v1.1.0</span>
         </div>
       </aside>
     </>

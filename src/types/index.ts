@@ -23,6 +23,33 @@ export type StockChangeReason =
   | 'Sale'
   | 'Purchase';
 
+// Sync Types
+export type SyncStatus = 'pending' | 'syncing' | 'synced' | 'failed' | 'local_only';
+
+export type SyncEntityType =
+  | 'products'
+  | 'sales'
+  | 'purchases'
+  | 'customers'
+  | 'suppliers'
+  | 'expenses'
+  | 'stockHistory';
+
+export type SyncOperationType = 'create' | 'update' | 'delete';
+
+export interface SyncQueueItem {
+  id: string; // unique queue item id e.g. "sync-xxxxx"
+  operationId: string; // idempotent entity id e.g. "SALE-xxxx"
+  entityType: SyncEntityType;
+  operationType: SyncOperationType;
+  payload: any;
+  createdAt: string;
+  retryCount: number;
+  status: SyncStatus;
+  errorMessage?: string;
+  userId?: string;
+}
+
 export interface Product {
   id: string;
   name: string;
@@ -33,6 +60,8 @@ export interface Product {
   minStock: number;
   createdAt: string;
   updatedAt: string;
+  userId?: string;
+  syncStatus?: SyncStatus;
 }
 
 export interface StockHistory {
@@ -45,11 +74,14 @@ export interface StockHistory {
   reason: StockChangeReason;
   timestamp: string;
   notes?: string;
+  transactionId?: string;
+  userId?: string;
+  syncStatus?: SyncStatus;
 }
 
-// New transaction types
+// Transaction types
 export interface Sale {
-  id: string;
+  id: string; // e.g. "SALE-xxxxx"
   productId: string;
   productName: string;
   quantity: number;
@@ -58,10 +90,14 @@ export interface Sale {
   paymentMethod: 'Cash' | 'UPI' | 'Credit';
   notes?: string;
   timestamp: string;
+  createdAt?: string;
+  updatedAt?: string;
+  userId?: string;
+  syncStatus?: SyncStatus;
 }
 
 export interface Purchase {
-  id: string;
+  id: string; // e.g. "PURCHASE-xxxxx"
   productId: string;
   productName: string;
   quantity: number;
@@ -70,17 +106,25 @@ export interface Purchase {
   supplierName: string;
   notes?: string;
   timestamp: string;
+  createdAt?: string;
+  updatedAt?: string;
+  userId?: string;
+  syncStatus?: SyncStatus;
 }
 
-// New entity types
+// Entity types
 export interface Customer {
   id: string;
   name: string;
   phone: string;
   address: string;
   notes?: string;
-  totalPurchases?: number; // optional aggregate
-  creditDue?: number; // optional credit amount
+  totalPurchases?: number;
+  creditDue?: number;
+  createdAt?: string;
+  updatedAt?: string;
+  userId?: string;
+  syncStatus?: SyncStatus;
 }
 
 export interface Supplier {
@@ -89,20 +133,27 @@ export interface Supplier {
   phone: string;
   address: string;
   notes?: string;
-  totalPurchases?: number; // optional aggregate
-  amountPayable?: number; // optional payable amount
+  totalPurchases?: number;
+  amountPayable?: number;
+  createdAt?: string;
+  updatedAt?: string;
+  userId?: string;
+  syncStatus?: SyncStatus;
 }
 
 export interface Expense {
-  id: string;
+  id: string; // e.g. "EXPENSE-xxxxx"
   category: 'Rent' | 'Electricity' | 'Transport' | 'Maintenance' | 'Other';
   amount: number;
   description?: string;
   date: string; // ISO string
+  createdAt?: string;
+  updatedAt?: string;
+  userId?: string;
+  syncStatus?: SyncStatus;
 }
 
 export type Transaction = Sale | Purchase;
-
 
 export interface DashboardMetrics {
   estimatedProfit?: number;
@@ -112,15 +163,12 @@ export interface DashboardMetrics {
   outOfStockCount: number;
   totalInventoryCost: number;
   totalPotentialRevenue: number;
-  totalSalesAmount: number; // sum of all sale totalAmount
-  totalPurchasesAmount: number; // sum of all purchase totalAmount
+  totalSalesAmount: number;
+  totalPurchasesAmount: number;
   totalCustomers: number;
   totalSuppliers: number;
   totalExpenses: number;
-
-
 }
-
 
 // User profile stored in Firestore
 export interface UserProfile {
@@ -139,4 +187,15 @@ export function calculateStockStatus(quantity: number, minStock: number): StockS
     return 'Low Stock';
   }
   return 'In Stock';
+}
+
+/**
+ * Generate a robust unique ID with a specified prefix.
+ * e.g., generateTransactionId('SALE') -> 'SALE-a1b2c3d4-e5f6'
+ */
+export function generateTransactionId(prefix: string): string {
+  const randomPart = typeof crypto !== 'undefined' && crypto.randomUUID
+    ? crypto.randomUUID().replace(/-/g, '').substring(0, 12)
+    : `${Date.now().toString(36)}${Math.random().toString(36).substring(2, 8)}`;
+  return `${prefix.toUpperCase()}-${randomPart}`;
 }
