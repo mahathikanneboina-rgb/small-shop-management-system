@@ -68,6 +68,7 @@ export const ReasonBadge: React.FC<{ reason: StockChangeReason }> = ({ reason })
   if (reason === 'Stock Correction') customClass = 'badge-reason-correction';
   if (reason === 'Sale') customClass = 'badge-reason-sale';
   if (reason === 'Purchase') customClass = 'badge-reason-purchase';
+  if (reason === 'Sale Reversal') customClass = 'badge-reason-reversal';
 
   return <span className={`badge ${customClass}`}>{reason}</span>;
 };

@@ -236,6 +236,8 @@ export type AuditLogAction =
   | 'STAFF_ROLE_CHANGED'
   | 'SETTINGS_UPDATED'
   | 'STOCK_CONFLICT_DETECTED'
+  | 'DATA_BACKUP_EXPORTED'
+  | 'DATA_BACKUP_RESTORED'
   | 'LOGIN'
   | 'LOGOUT';
 
@@ -250,6 +252,24 @@ export interface AuditLog {
   description: string;
   timestamp: string;
   syncStatus?: SyncStatus;
+}
+
+export interface ShopBackupData {
+  version: string;
+  exportDate: string;
+  exportedBy?: string;
+  shopName: string;
+  data: {
+    products: Product[];
+    sales: Sale[];
+    purchases: Purchase[];
+    customers: Customer[];
+    suppliers: Supplier[];
+    expenses: Expense[];
+    stockHistory: StockHistory[];
+    auditLogs: AuditLog[];
+    settings: ShopSettings;
+  };
 }
 
 // Shop Settings

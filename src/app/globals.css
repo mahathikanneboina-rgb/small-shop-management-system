@@ -590,6 +590,12 @@ body {
   border: 1px solid #a7f3d0;
 }
 
+.badge-reason-reversal {
+  background-color: #f3e8ff;
+  color: #6b21a8;
+  border: 1px solid #e9d5ff;
+}
+
 /* Buttons */
 .btn {
   display: inline-flex;

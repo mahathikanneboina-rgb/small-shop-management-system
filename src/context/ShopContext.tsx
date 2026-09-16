@@ -22,6 +22,7 @@ import {
   SyncQueueItem,
   AuditLog,
   ShopSettings,
+  ShopBackupData,
   generateTransactionId,
   generateInvoiceNumber,
 } from '../types';
@@ -97,6 +98,8 @@ interface ShopContextType {
   ) => boolean;
   recordExpense: (expense: Omit<Expense, 'id'>) => Expense;
   updateSettings: (newSettings: ShopSettings) => Promise<void>;
+  exportBackupData: () => ShopBackupData;
+  restoreBackupData: (backup: ShopBackupData) => Promise<{ success: boolean; count: number }>;
   syncNow: () => Promise<void>;
   retryFailedSync: () => Promise<void>;
 }
@@ -1476,6 +1479,176 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, [isOnline, showToast]);
 
+  const exportBackupData = useCallback((): ShopBackupData => {
+    const backup: ShopBackupData = {
+      version: '1.0',
+      exportDate: new Date().toISOString(),
+      exportedBy: currentUserName,
+      shopName: settings.shopName,
+      data: {
+        products,
+        sales,
+        purchases,
+        customers,
+        suppliers,
+        expenses,
+        stockHistory,
+        auditLogs,
+        settings,
+      },
+    };
+
+    auditService.log(
+      'DATA_BACKUP_EXPORTED',
+      'settings',
+      'shop_settings',
+      `Owner exported shop JSON backup (${products.length} products, ${sales.length} sales)`,
+      { uid: currentUserId || 'system', name: currentUserName, email: user?.email || undefined }
+    );
+
+    return backup;
+  }, [
+    products,
+    sales,
+    purchases,
+    customers,
+    suppliers,
+    expenses,
+    stockHistory,
+    auditLogs,
+    settings,
+    currentUserId,
+    currentUserName,
+    user?.email,
+  ]);
+
+  const restoreBackupData = useCallback(
+    async (backup: ShopBackupData): Promise<{ success: boolean; count: number }> => {
+      if (isDisabled) {
+        showToast('error', 'Your account is disabled. Cannot restore backups.');
+        return { success: false, count: 0 };
+      }
+
+      if (!backup || !backup.data) {
+        showToast('error', 'Invalid backup file structure.');
+        return { success: false, count: 0 };
+      }
+
+      const { data } = backup;
+      let restoredCount = 0;
+
+      try {
+        // 1. Restore products
+        if (Array.isArray(data.products) && data.products.length > 0) {
+          for (const p of data.products) {
+            if (p.id && p.name) {
+              await indexedDbService.put('products', p);
+              await syncService.enqueue(p.id, 'products', 'update', p, currentUserId, currentUserName);
+              restoredCount++;
+            }
+          }
+          setProducts(data.products);
+        }
+
+        // 2. Restore sales
+        if (Array.isArray(data.sales) && data.sales.length > 0) {
+          for (const s of data.sales) {
+            if (s.id) {
+              await indexedDbService.put('sales', s);
+              await syncService.enqueue(s.id, 'sales', 'create', s, currentUserId, currentUserName);
+              restoredCount++;
+            }
+          }
+          setSales(data.sales);
+        }
+
+        // 3. Restore purchases
+        if (Array.isArray(data.purchases) && data.purchases.length > 0) {
+          for (const pr of data.purchases) {
+            if (pr.id) {
+              await indexedDbService.put('purchases', pr);
+              await syncService.enqueue(pr.id, 'purchases', 'create', pr, currentUserId, currentUserName);
+              restoredCount++;
+            }
+          }
+          setPurchases(data.purchases);
+        }
+
+        // 4. Restore customers
+        if (Array.isArray(data.customers) && data.customers.length > 0) {
+          for (const c of data.customers) {
+            if (c.id && c.name) {
+              await indexedDbService.put('customers', c);
+              await syncService.enqueue(c.id, 'customers', 'update', c, currentUserId, currentUserName);
+              restoredCount++;
+            }
+          }
+          setCustomers(data.customers);
+        }
+
+        // 5. Restore suppliers
+        if (Array.isArray(data.suppliers) && data.suppliers.length > 0) {
+          for (const sup of data.suppliers) {
+            if (sup.id && sup.name) {
+              await indexedDbService.put('suppliers', sup);
+              await syncService.enqueue(sup.id, 'suppliers', 'update', sup, currentUserId, currentUserName);
+              restoredCount++;
+            }
+          }
+          setSuppliers(data.suppliers);
+        }
+
+        // 6. Restore expenses
+        if (Array.isArray(data.expenses) && data.expenses.length > 0) {
+          for (const exp of data.expenses) {
+            if (exp.id) {
+              await indexedDbService.put('expenses', exp);
+              await syncService.enqueue(exp.id, 'expenses', 'create', exp, currentUserId, currentUserName);
+              restoredCount++;
+            }
+          }
+          setExpenses(data.expenses);
+        }
+
+        // 7. Restore stock history
+        if (Array.isArray(data.stockHistory) && data.stockHistory.length > 0) {
+          for (const sh of data.stockHistory) {
+            if (sh.id) {
+              await indexedDbService.put('stockHistory', sh);
+              await syncService.enqueue(sh.id, 'stockHistory', 'create', sh, currentUserId, currentUserName);
+              restoredCount++;
+            }
+          }
+          setStockHistory(data.stockHistory);
+        }
+
+        // 8. Restore settings
+        if (data.settings && data.settings.shopName) {
+          await indexedDbService.put('settings', data.settings);
+          await syncService.enqueue(data.settings.id, 'settings', 'update', data.settings, currentUserId, currentUserName);
+          setSettings(data.settings);
+        }
+
+        // 9. Audit Log
+        await auditService.log(
+          'DATA_BACKUP_RESTORED',
+          'settings',
+          'shop_settings',
+          `Restored store data from backup file (${restoredCount} records merged)`,
+          { uid: currentUserId || 'system', name: currentUserName, email: user?.email || undefined }
+        );
+
+        showToast('success', `Backup restored successfully (${restoredCount} records merged).`);
+        return { success: true, count: restoredCount };
+      } catch (err: any) {
+        console.error('Failed to restore backup:', err);
+        showToast('error', `Failed to restore backup: ${err.message || 'Error parsing file'}`);
+        return { success: false, count: 0 };
+      }
+    },
+    [currentUserId, currentUserName, user?.email, isDisabled, showToast]
+  );
+
   return (
     <ShopContext.Provider
       value={{
@@ -1510,6 +1683,8 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
         recordPurchase,
         recordExpense,
         updateSettings,
+        exportBackupData,
+        restoreBackupData,
         syncNow,
         retryFailedSync,
       }}

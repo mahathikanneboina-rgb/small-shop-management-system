@@ -81,6 +81,7 @@ export default function StockHistoryPage() {
               <option value="Initial Stock">Initial Stock</option>
               <option value="Stock Correction">Stock Correction</option>
               <option value="Sale">Sale</option>
+              <option value="Sale Reversal">Sale Reversal</option>
               <option value="Purchase">Purchase</option>
             </select>
           </div>

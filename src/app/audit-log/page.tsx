@@ -38,6 +38,8 @@ function AuditLogContent() {
     switch (action) {
       case 'SALE_CREATED':
         return <span className="sync-badge badge-synced">🛒 Sale Created</span>;
+      case 'SALE_CANCELLED':
+        return <span className="sync-badge badge-failed">↩️ Sale Cancelled/Reversed</span>;
       case 'PURCHASE_CREATED':
         return <span className="sync-badge badge-syncing">📥 Purchase Created</span>;
       case 'PRODUCT_CREATED':
@@ -54,6 +56,10 @@ function AuditLogContent() {
         return <span className="sync-badge badge-synced">✅ Staff Reactivated</span>;
       case 'STOCK_CONFLICT_DETECTED':
         return <span className="sync-badge badge-failed">⚠️ Stock Conflict</span>;
+      case 'DATA_BACKUP_EXPORTED':
+        return <span className="sync-badge badge-syncing">💾 Backup Exported</span>;
+      case 'DATA_BACKUP_RESTORED':
+        return <span className="sync-badge badge-synced">🔄 Backup Restored</span>;
       case 'LOGIN':
         return <span className="sync-badge badge-syncing">🔑 User Login</span>;
       case 'LOGOUT':
@@ -95,6 +101,7 @@ function AuditLogContent() {
           >
             <option value="ALL">All Event Actions</option>
             <option value="SALE_CREATED">Sales Created</option>
+            <option value="SALE_CANCELLED">Sales Cancelled / Reversed</option>
             <option value="PURCHASE_CREATED">Purchases Created</option>
             <option value="PRODUCT_CREATED">Products Added</option>
             <option value="PRODUCT_UPDATED">Products Updated</option>
@@ -103,6 +110,8 @@ function AuditLogContent() {
             <option value="STAFF_DISABLED">Staff Disabled</option>
             <option value="STAFF_REACTIVATED">Staff Reactivated</option>
             <option value="STOCK_CONFLICT_DETECTED">Stock Conflicts</option>
+            <option value="DATA_BACKUP_EXPORTED">Backups Exported</option>
+            <option value="DATA_BACKUP_RESTORED">Backups Restored</option>
             <option value="LOGIN">User Logins</option>
             <option value="LOGOUT">User Logouts</option>
           </select>
