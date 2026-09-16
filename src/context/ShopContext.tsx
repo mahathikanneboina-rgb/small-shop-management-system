@@ -14,6 +14,7 @@ import {
   DashboardMetrics,
   StockChangeReason,
   Sale,
+  SaleItem,
   Purchase,
   Customer,
   Supplier,
@@ -22,6 +23,7 @@ import {
   AuditLog,
   ShopSettings,
   generateTransactionId,
+  generateInvoiceNumber,
 } from '../types';
 import { indexedDbService, DEFAULT_SHOP_SETTINGS } from '../services/indexedDbService';
 import { syncService } from '../services/syncService';
@@ -32,6 +34,16 @@ export interface ToastMessage {
   id: string;
   type: 'success' | 'error' | 'warning' | 'info';
   message: string;
+}
+
+export interface BillingSaleInput {
+  items: SaleItem[];
+  paymentMethod: 'Cash' | 'UPI' | 'Credit';
+  customerId?: string;
+  customerName?: string;
+  discount?: number;
+  amountReceived?: number;
+  notes?: string;
 }
 
 interface ShopContextType {
@@ -73,6 +85,10 @@ interface ShopContextType {
     paymentMethod: 'Cash' | 'UPI' | 'Credit',
     notes?: string
   ) => boolean;
+  recordBillingSale: (input: BillingSaleInput) => Sale | null;
+  cancelSale: (saleId: string, reason?: string) => boolean;
+  addCustomer: (customerData: Omit<Customer, 'id' | 'createdAt' | 'updatedAt'>) => Customer;
+  updateCustomer: (id: string, updates: Partial<Customer>) => void;
   recordPurchase: (
     productId: string,
     quantity: number,
@@ -703,6 +719,491 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
     [products, currentUserId, currentUserName, user?.email, isDisabled, isOnline, showToast]
   );
 
+  // Record a multi-item POS / Billing Sale (Local-First + Sync + Audit)
+  const recordBillingSale = useCallback(
+    (input: BillingSaleInput): Sale | null => {
+      if (isDisabled) {
+        showToast('error', 'Your staff account is disabled. Cannot create sales.');
+        return null;
+      }
+
+      if (!input.items || input.items.length === 0) {
+        showToast('error', 'Cart is empty. Add at least one product.');
+        return null;
+      }
+
+      // 1. Stock & Product validation
+      for (const item of input.items) {
+        if (item.quantity <= 0) {
+          showToast('error', `Invalid quantity for "${item.productName}".`);
+          return null;
+        }
+        const product = products.find((p) => p.id === item.productId);
+        if (!product) {
+          showToast('error', `Product "${item.productName}" was not found.`);
+          return null;
+        }
+        if (product.quantity < item.quantity) {
+          showToast('error', `Only ${product.quantity} units available for "${product.name}".`);
+          return null;
+        }
+      }
+
+      // 2. Calculations
+      const subtotal = input.items.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
+      const discount = Math.max(0, input.discount || 0);
+      if (discount > subtotal) {
+        showToast('error', 'Discount cannot exceed the subtotal.');
+        return null;
+      }
+      const finalTotal = Math.max(0, subtotal - discount);
+
+      // 3. Payment Method Validations
+      let amountReceived = input.amountReceived;
+      let changeAmount = 0;
+      if (input.paymentMethod === 'Cash') {
+        if (amountReceived === undefined) {
+          amountReceived = finalTotal;
+        }
+        if (amountReceived < finalTotal) {
+          showToast('error', `Received amount is less than total.`);
+          return null;
+        }
+        changeAmount = amountReceived - finalTotal;
+      } else if (input.paymentMethod === 'Credit') {
+        if (!input.customerId || !input.customerName) {
+          showToast('error', 'Please select a customer for credit sales.');
+          return null;
+        }
+      }
+
+      const now = new Date().toISOString();
+      const saleId = generateTransactionId('SALE');
+      const invoiceNumber = generateInvoiceNumber();
+
+      // 4. Deduct stock & create StockHistory for each line item
+      const updatedProductsMap = new Map<string, Product>();
+      const newStockHistories: StockHistory[] = [];
+
+      input.items.forEach((item) => {
+        const prod = products.find((p) => p.id === item.productId)!;
+        const currentProd = updatedProductsMap.get(prod.id) || prod;
+        const newQty = currentProd.quantity - item.quantity;
+        const updatedProd: Product = {
+          ...currentProd,
+          quantity: newQty,
+          updatedAt: now,
+          syncStatus: 'pending',
+          version: (currentProd.version || 1) + 1,
+        };
+        updatedProductsMap.set(prod.id, updatedProd);
+
+        const histId = generateTransactionId('HIST');
+        const histEntry: StockHistory = {
+          id: histId,
+          productId: prod.id,
+          productName: prod.name,
+          previousQuantity: currentProd.quantity,
+          quantityChanged: -item.quantity,
+          newQuantity: newQty,
+          reason: 'Sale',
+          notes: input.notes || `Bill #${invoiceNumber}`,
+          timestamp: now,
+          transactionId: saleId,
+          userId: currentUserId,
+          userName: currentUserName,
+          syncStatus: 'pending',
+        };
+        newStockHistories.push(histEntry);
+      });
+
+      // 5. Update customer balance if credit sale
+      let updatedCustomer: Customer | null = null;
+      if (input.paymentMethod === 'Credit' && input.customerId) {
+        const cust = customers.find((c) => c.id === input.customerId);
+        if (cust) {
+          updatedCustomer = {
+            ...cust,
+            creditDue: (cust.creditDue || 0) + finalTotal,
+            totalPurchases: (cust.totalPurchases || 0) + finalTotal,
+            updatedAt: now,
+            syncStatus: 'pending',
+          };
+        }
+      }
+
+      // 6. Construct composite Sale record
+      const primaryItem = input.items[0];
+      const saleEntry: Sale = {
+        id: saleId,
+        invoiceNumber,
+        productId: input.items.length === 1 ? primaryItem.productId : 'MULTIPLE',
+        productName:
+          input.items.length === 1
+            ? primaryItem.productName
+            : `${primaryItem.productName} +${input.items.length - 1} item${input.items.length > 2 ? 's' : ''}`,
+        quantity: input.items.reduce((s, i) => s + i.quantity, 0),
+        unitPrice:
+          input.items.length === 1
+            ? primaryItem.unitPrice
+            : subtotal / Math.max(1, input.items.reduce((s, i) => s + i.quantity, 0)),
+        subtotal,
+        discount,
+        totalAmount: finalTotal,
+        paymentMethod: input.paymentMethod,
+        customerId: input.customerId,
+        customerName: input.customerName,
+        amountReceived,
+        changeAmount,
+        items: input.items,
+        notes: input.notes,
+        timestamp: now,
+        createdAt: now,
+        updatedAt: now,
+        userId: currentUserId,
+        userName: currentUserName,
+        syncStatus: 'pending',
+      };
+
+      // 7. Update React state immediately
+      setProducts((prev) =>
+        prev.map((p) => (updatedProductsMap.has(p.id) ? updatedProductsMap.get(p.id)! : p))
+      );
+      setSales((prev) => [saleEntry, ...prev]);
+      setStockHistory((prev) => [...newStockHistories, ...prev]);
+      if (updatedCustomer) {
+        setCustomers((prev) =>
+          prev.map((c) => (c.id === updatedCustomer!.id ? updatedCustomer! : c))
+        );
+      }
+
+      // 8. Persist to IndexedDB & enqueue to Sync Queue
+      indexedDbService.put('sales', saleEntry);
+      syncService.enqueue(
+        saleEntry.id,
+        'sales',
+        'create',
+        saleEntry,
+        currentUserId,
+        currentUserName
+      );
+
+      updatedProductsMap.forEach((updatedProd) => {
+        indexedDbService.put('products', updatedProd);
+        syncService.enqueue(
+          updatedProd.id,
+          'products',
+          'update',
+          updatedProd,
+          currentUserId,
+          currentUserName
+        );
+      });
+
+      newStockHistories.forEach((hist) => {
+        indexedDbService.put('stockHistory', hist);
+        syncService.enqueue(
+          hist.id,
+          'stockHistory',
+          'create',
+          hist,
+          currentUserId,
+          currentUserName
+        );
+      });
+
+      if (updatedCustomer) {
+        indexedDbService.put('customers', updatedCustomer);
+        syncService.enqueue(
+          updatedCustomer.id,
+          'customers',
+          'update',
+          updatedCustomer,
+          currentUserId,
+          currentUserName
+        );
+      }
+
+      // 9. Audit Log
+      auditService.log(
+        'SALE_CREATED',
+        'sale',
+        saleId,
+        `Created Bill #${invoiceNumber} (${input.items.length} items, Total: ${finalTotal.toFixed(2)}, Pay: ${input.paymentMethod}${input.customerName ? `, Customer: ${input.customerName}` : ''})`,
+        { uid: currentUserId || 'system', name: currentUserName, email: user?.email || undefined }
+      );
+
+      showToast(
+        'success',
+        isOnline
+          ? `Bill #${invoiceNumber} completed & synced.`
+          : `Bill #${invoiceNumber} saved locally (offline mode).`
+      );
+
+      return saleEntry;
+    },
+    [products, customers, currentUserId, currentUserName, user?.email, isDisabled, isOnline, showToast]
+  );
+
+  // Safe Sale Cancellation / Reversal
+  const cancelSale = useCallback(
+    (saleId: string, reason?: string): boolean => {
+      if (isDisabled) {
+        showToast('error', 'Your staff account is disabled. Cannot cancel sales.');
+        return false;
+      }
+
+      const sale = sales.find((s) => s.id === saleId);
+      if (!sale) {
+        showToast('error', 'Sale not found.');
+        return false;
+      }
+      if (sale.isCancelled) {
+        showToast('warning', 'This sale has already been cancelled.');
+        return false;
+      }
+
+      const now = new Date().toISOString();
+      const updatedProductsMap = new Map<string, Product>();
+      const reversalHistories: StockHistory[] = [];
+
+      // Restore stock
+      if (sale.items && sale.items.length > 0) {
+        sale.items.forEach((item) => {
+          const prod = products.find((p) => p.id === item.productId);
+          if (prod) {
+            const currentProd = updatedProductsMap.get(prod.id) || prod;
+            const restoredQty = currentProd.quantity + item.quantity;
+            const updatedProd: Product = {
+              ...currentProd,
+              quantity: restoredQty,
+              updatedAt: now,
+              syncStatus: 'pending',
+              version: (currentProd.version || 1) + 1,
+            };
+            updatedProductsMap.set(prod.id, updatedProd);
+
+            const histId = generateTransactionId('HIST');
+            const histEntry: StockHistory = {
+              id: histId,
+              productId: prod.id,
+              productName: prod.name,
+              previousQuantity: currentProd.quantity,
+              quantityChanged: item.quantity,
+              newQuantity: restoredQty,
+              reason: 'Sale Reversal',
+              notes: reason || `Cancelled Bill #${sale.invoiceNumber || sale.id}`,
+              timestamp: now,
+              transactionId: sale.id,
+              userId: currentUserId,
+              userName: currentUserName,
+              syncStatus: 'pending',
+            };
+            reversalHistories.push(histEntry);
+          }
+        });
+      } else if (sale.productId && sale.productId !== 'MULTIPLE') {
+        const prod = products.find((p) => p.id === sale.productId);
+        if (prod) {
+          const restoredQty = prod.quantity + sale.quantity;
+          const updatedProd: Product = {
+            ...prod,
+            quantity: restoredQty,
+            updatedAt: now,
+            syncStatus: 'pending',
+            version: (prod.version || 1) + 1,
+          };
+          updatedProductsMap.set(prod.id, updatedProd);
+
+          const histId = generateTransactionId('HIST');
+          const histEntry: StockHistory = {
+            id: histId,
+            productId: prod.id,
+            productName: prod.name,
+            previousQuantity: prod.quantity,
+            quantityChanged: sale.quantity,
+            newQuantity: restoredQty,
+            reason: 'Sale Reversal',
+            notes: reason || `Cancelled Sale #${sale.id}`,
+            timestamp: now,
+            transactionId: sale.id,
+            userId: currentUserId,
+            userName: currentUserName,
+            syncStatus: 'pending',
+          };
+          reversalHistories.push(histEntry);
+        }
+      }
+
+      // Customer credit reversal if applicable
+      let updatedCustomer: Customer | null = null;
+      if (sale.paymentMethod === 'Credit' && sale.customerId) {
+        const cust = customers.find((c) => c.id === sale.customerId);
+        if (cust) {
+          updatedCustomer = {
+            ...cust,
+            creditDue: Math.max(0, (cust.creditDue || 0) - sale.totalAmount),
+            totalPurchases: Math.max(0, (cust.totalPurchases || 0) - sale.totalAmount),
+            updatedAt: now,
+            syncStatus: 'pending',
+          };
+        }
+      }
+
+      const cancelledSale: Sale = {
+        ...sale,
+        isCancelled: true,
+        cancelledAt: now,
+        cancelledBy: currentUserName,
+        cancelReason: reason || 'Sale cancelled by store staff',
+        updatedAt: now,
+        syncStatus: 'pending',
+      };
+
+      // State update
+      setProducts((prev) =>
+        prev.map((p) => (updatedProductsMap.has(p.id) ? updatedProductsMap.get(p.id)! : p))
+      );
+      setSales((prev) => prev.map((s) => (s.id === saleId ? cancelledSale : s)));
+      setStockHistory((prev) => [...reversalHistories, ...prev]);
+      if (updatedCustomer) {
+        setCustomers((prev) =>
+          prev.map((c) => (c.id === updatedCustomer!.id ? updatedCustomer! : c))
+        );
+      }
+
+      // IndexedDB & Sync
+      indexedDbService.put('sales', cancelledSale);
+      syncService.enqueue(
+        cancelledSale.id,
+        'sales',
+        'update',
+        cancelledSale,
+        currentUserId,
+        currentUserName
+      );
+
+      updatedProductsMap.forEach((updatedProd) => {
+        indexedDbService.put('products', updatedProd);
+        syncService.enqueue(
+          updatedProd.id,
+          'products',
+          'update',
+          updatedProd,
+          currentUserId,
+          currentUserName
+        );
+      });
+
+      reversalHistories.forEach((hist) => {
+        indexedDbService.put('stockHistory', hist);
+        syncService.enqueue(
+          hist.id,
+          'stockHistory',
+          'create',
+          hist,
+          currentUserId,
+          currentUserName
+        );
+      });
+
+      if (updatedCustomer) {
+        indexedDbService.put('customers', updatedCustomer);
+        syncService.enqueue(
+          updatedCustomer.id,
+          'customers',
+          'update',
+          updatedCustomer,
+          currentUserId,
+          currentUserName
+        );
+      }
+
+      // Audit Log
+      auditService.log(
+        'SALE_CANCELLED',
+        'sale',
+        saleId,
+        `Reversed/Cancelled Bill #${sale.invoiceNumber || sale.id} (${sale.productName}, Amount: ${sale.totalAmount.toFixed(2)}) - ${reason || 'User cancellation'}`,
+        { uid: currentUserId || 'system', name: currentUserName, email: user?.email || undefined }
+      );
+
+      showToast('info', `Bill #${sale.invoiceNumber || sale.id} cancelled & stock restored.`);
+      return true;
+    },
+    [sales, products, customers, currentUserId, currentUserName, user?.email, isDisabled, showToast]
+  );
+
+  const addCustomer = useCallback(
+    (customerData: Omit<Customer, 'id' | 'createdAt' | 'updatedAt'>): Customer => {
+      if (isDisabled) {
+        showToast('error', 'Your account is disabled.');
+        throw new Error('Account disabled');
+      }
+
+      const now = new Date().toISOString();
+      const customerId = generateTransactionId('CUST');
+      const newCustomer: Customer = {
+        ...customerData,
+        id: customerId,
+        totalPurchases: customerData.totalPurchases || 0,
+        creditDue: customerData.creditDue || 0,
+        createdAt: now,
+        updatedAt: now,
+        userId: currentUserId,
+        userName: currentUserName,
+        syncStatus: 'pending',
+      };
+
+      setCustomers((prev) => [newCustomer, ...prev]);
+      indexedDbService.put('customers', newCustomer);
+      syncService.enqueue(
+        newCustomer.id,
+        'customers',
+        'create',
+        newCustomer,
+        currentUserId,
+        currentUserName
+      );
+
+      showToast('success', `Customer "${newCustomer.name}" added.`);
+      return newCustomer;
+    },
+    [currentUserId, currentUserName, isDisabled, showToast]
+  );
+
+  const updateCustomer = useCallback(
+    (id: string, updates: Partial<Customer>) => {
+      if (isDisabled) {
+        showToast('error', 'Your account is disabled.');
+        return;
+      }
+
+      const target = customers.find((c) => c.id === id);
+      if (!target) return;
+
+      const now = new Date().toISOString();
+      const updatedCustomer: Customer = {
+        ...target,
+        ...updates,
+        updatedAt: now,
+        syncStatus: 'pending',
+      };
+
+      setCustomers((prev) => prev.map((c) => (c.id === id ? updatedCustomer : c)));
+      indexedDbService.put('customers', updatedCustomer);
+      syncService.enqueue(
+        updatedCustomer.id,
+        'customers',
+        'update',
+        updatedCustomer,
+        currentUserId,
+        currentUserName
+      );
+    },
+    [customers, currentUserId, currentUserName, isDisabled, showToast]
+  );
+
   // Record a purchase transaction (Local-First + Sync + Audit)
   const recordPurchase = useCallback(
     (
@@ -1002,6 +1503,10 @@ export const ShopProvider: React.FC<{ children: React.ReactNode }> = ({ children
         resetSampleData,
         getProductById,
         recordSale,
+        recordBillingSale,
+        cancelSale,
+        addCustomer,
+        updateCustomer,
         recordPurchase,
         recordExpense,
         updateSettings,

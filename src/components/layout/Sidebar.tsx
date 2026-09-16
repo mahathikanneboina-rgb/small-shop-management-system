@@ -36,6 +36,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
 
   const NAV_ITEMS: NavItemDef[] = [
     { label: 'Dashboard', href: '/', icon: '📊', isWorking: true },
+    { label: 'Billing / POS', href: '/billing', icon: '🧾', isWorking: true },
     { label: 'Products', href: '/products', icon: '📦', isWorking: true },
     { label: 'Sales', href: '/sales', icon: '🛒', isWorking: true },
     { label: 'Purchases', href: '/purchases', icon: '📥', isWorking: true },
@@ -43,10 +44,10 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
     { label: 'Suppliers', href: '/coming-soon?feature=Suppliers', icon: '🏭', isWorking: false, featureKey: 'Suppliers' },
     { label: 'Expenses', href: '/coming-soon?feature=Expenses', icon: '💸', isWorking: false, featureKey: 'Expenses' },
     { label: 'Stock History', href: '/stock-history', icon: '📜', isWorking: true },
+    { label: 'Reports', href: '/reports', icon: '📈', isWorking: true },
     { label: 'Sync Status', href: '/sync-status', icon: '🔄', isWorking: true },
     { label: 'Staff Management', href: '/staff', icon: '👥', isWorking: true, ownerOnly: true },
     { label: 'Audit Log', href: '/audit-log', icon: '🛡️', isWorking: true, ownerOnly: true },
-    { label: 'Reports', href: '/coming-soon?feature=Reports', icon: '📈', isWorking: false, featureKey: 'Reports' },
     { label: 'Settings', href: '/settings', icon: '⚙️', isWorking: true, ownerOnly: true },
   ];
 

@@ -8,7 +8,7 @@ import { StockStatusBadge, CategoryBadge, ReasonBadge } from '../components/comm
 import { Modal } from '../components/common/Modal';
 
 export default function DashboardPage() {
-  const { products, stockHistory, metrics, isLoading, resetSampleData, adjustStock } = useShop();
+  const { products, sales, stockHistory, metrics, settings, isLoading, resetSampleData, adjustStock } = useShop();
 
   // Quick stock adjustment modal state from low stock section
   const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
@@ -21,6 +21,25 @@ export default function DashboardPage() {
 
   const selectedProduct = products.find((p) => p.id === selectedProductId);
 
+  // Today's Sales Metrics
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+  const todayTime = todayStart.getTime();
+
+  const todaySales = sales.filter(
+    (s) => !s.isCancelled && new Date(s.timestamp || s.createdAt || 0).getTime() >= todayTime
+  );
+  const todayTotal = todaySales.reduce((sum, s) => sum + s.totalAmount, 0);
+  const todayCash = todaySales
+    .filter((s) => s.paymentMethod === 'Cash')
+    .reduce((sum, s) => sum + s.totalAmount, 0);
+  const todayUpi = todaySales
+    .filter((s) => s.paymentMethod === 'UPI')
+    .reduce((sum, s) => sum + s.totalAmount, 0);
+  const todayCredit = todaySales
+    .filter((s) => s.paymentMethod === 'Credit')
+    .reduce((sum, s) => sum + s.totalAmount, 0);
+
   const handleQuickAdjust = (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedProduct) return;
@@ -32,13 +51,8 @@ export default function DashboardPage() {
     setAdjustmentNotes('');
   };
 
-  const formatCurrency = (val: number) => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
-      minimumFractionDigits: 2,
-    }).format(val);
-  };
+  const currency = settings.currencySymbol || '₹';
+  const formatCurrency = (val: number) => `${currency}${val.toFixed(2)}`;
 
   const formatDate = (dateStr: string) => {
     try {
@@ -70,7 +84,7 @@ export default function DashboardPage() {
         <div>
           <h2 style={{ fontSize: '1.25rem', fontWeight: 700 }}>Shop Overview</h2>
           <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-            Real-time summary of inventory, low stock warnings, and recent activity
+            Real-time summary of billing, sales, inventory, and low stock warnings
           </p>
         </div>
         <div style={{ display: 'flex', gap: '10px' }}>
@@ -82,9 +96,47 @@ export default function DashboardPage() {
           >
             ↻ Reset Sample Data
           </button>
-          <Link href="/products" className="btn btn-primary btn-sm">
-            + Manage Products
+          <Link href="/billing" className="btn btn-primary btn-sm" style={{ fontWeight: 700 }}>
+            🧾 Open POS Billing
           </Link>
+        </div>
+      </div>
+
+      {/* POS Billing & Today's Performance Summary Strip */}
+      <div className="pos-today-strip" style={{ marginBottom: '20px' }}>
+        <div className="card" style={{ padding: '16px 20px', background: 'linear-gradient(135deg, #1e293b, #0f172a)', color: '#f8fafc' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
+            <div>
+              <div style={{ fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: '#94a3b8', fontWeight: 600 }}>
+                Today&apos;s Store Performance
+              </div>
+              <div style={{ fontSize: '1.75rem', fontWeight: 800, marginTop: '2px', color: '#38bdf8' }}>
+                {formatCurrency(todayTotal)}
+              </div>
+              <div style={{ fontSize: '0.8rem', color: '#cbd5e1' }}>
+                {todaySales.length} bill{todaySales.length === 1 ? '' : 's'} issued today
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
+              <div style={{ backgroundColor: 'rgba(255,255,255,0.08)', padding: '8px 14px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)' }}>
+                <span style={{ fontSize: '0.75rem', color: '#94a3b8', display: 'block' }}>💵 Cash</span>
+                <strong style={{ fontSize: '1rem', color: '#34d399' }}>{formatCurrency(todayCash)}</strong>
+              </div>
+              <div style={{ backgroundColor: 'rgba(255,255,255,0.08)', padding: '8px 14px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)' }}>
+                <span style={{ fontSize: '0.75rem', color: '#94a3b8', display: 'block' }}>📱 UPI</span>
+                <strong style={{ fontSize: '1rem', color: '#60a5fa' }}>{formatCurrency(todayUpi)}</strong>
+              </div>
+              <div style={{ backgroundColor: 'rgba(255,255,255,0.08)', padding: '8px 14px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)' }}>
+                <span style={{ fontSize: '0.75rem', color: '#94a3b8', display: 'block' }}>👤 Credit</span>
+                <strong style={{ fontSize: '1rem', color: '#fbbf24' }}>{formatCurrency(todayCredit)}</strong>
+              </div>
+            </div>
+
+            <Link href="/billing" className="btn btn-primary" style={{ backgroundColor: '#2563eb', borderColor: '#3b82f6' }}>
+              ⚡ Fast Billing &rarr;
+            </Link>
+          </div>
         </div>
       </div>
 

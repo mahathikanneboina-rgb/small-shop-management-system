@@ -21,7 +21,8 @@ export type StockChangeReason =
   | 'Initial Stock'
   | 'Stock Correction'
   | 'Sale'
-  | 'Purchase';
+  | 'Purchase'
+  | 'Sale Reversal';
 
 // Sync Types
 export type SyncStatus = 'pending' | 'syncing' | 'synced' | 'failed' | 'conflict' | 'local_only';
@@ -58,6 +59,7 @@ export interface Product {
   id: string;
   name: string;
   category: ProductCategory;
+  productCode?: string;
   purchasePrice: number;
   sellingPrice: number;
   quantity: number;
@@ -88,6 +90,15 @@ export interface StockHistory {
   syncStatus?: SyncStatus;
 }
 
+export interface SaleItem {
+  productId: string;
+  productName: string;
+  productCode?: string;
+  quantity: number;
+  unitPrice: number;
+  lineTotal: number;
+}
+
 // Transaction types
 export interface Sale {
   id: string; // e.g. "SALE-xxxxx"
@@ -104,6 +115,19 @@ export interface Sale {
   userId?: string;
   userName?: string;
   syncStatus?: SyncStatus;
+  // Phase 8 POS & Billing Extensions
+  invoiceNumber?: string;
+  items?: SaleItem[];
+  subtotal?: number;
+  discount?: number;
+  customerId?: string;
+  customerName?: string;
+  amountReceived?: number;
+  changeAmount?: number;
+  isCancelled?: boolean;
+  cancelledAt?: string;
+  cancelledBy?: string;
+  cancelReason?: string;
 }
 
 export interface Purchase {
@@ -201,6 +225,7 @@ export interface UserProfile {
 // Audit Log Types
 export type AuditLogAction =
   | 'SALE_CREATED'
+  | 'SALE_CANCELLED'
   | 'PURCHASE_CREATED'
   | 'PRODUCT_CREATED'
   | 'PRODUCT_UPDATED'
@@ -261,4 +286,23 @@ export function generateTransactionId(prefix: string): string {
       ? crypto.randomUUID().replace(/-/g, '').substring(0, 12)
       : `${Date.now().toString(36)}${Math.random().toString(36).substring(2, 8)}`;
   return `${prefix.toUpperCase()}-${randomPart}`;
+}
+
+/**
+ * Generate a unique, deterministic, non-colliding invoice number across devices.
+ * e.g., INV-20260916-A7B8
+ */
+export function generateInvoiceNumber(): string {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  const dateStr = `${year}${month}${day}`;
+
+  const randomPart =
+    typeof crypto !== 'undefined' && crypto.randomUUID
+      ? crypto.randomUUID().replace(/-/g, '').substring(0, 6).toUpperCase()
+      : Math.random().toString(36).substring(2, 8).toUpperCase();
+
+  return `INV-${dateStr}-${randomPart}`;
 }

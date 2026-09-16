@@ -16,6 +16,7 @@ import { Modal } from '../../components/common/Modal';
 interface ProductFormData {
   name: string;
   category: ProductCategory;
+  productCode: string;
   purchasePrice: string;
   sellingPrice: string;
   quantity: string;
@@ -25,6 +26,7 @@ interface ProductFormData {
 const INITIAL_FORM_DATA: ProductFormData = {
   name: '',
   category: 'Grocery',
+  productCode: '',
   purchasePrice: '',
   sellingPrice: '',
   quantity: '',
@@ -57,26 +59,47 @@ export default function ProductsPage() {
   // Filtered products list
   const filteredProducts = useMemo(() => {
     return products.filter((p) => {
-      // Search filter
-      const matchesSearch = p.name.toLowerCase().includes(searchTerm.toLowerCase().trim());
+      const term = searchTerm.toLowerCase().trim();
+      // Search filter matches name or productCode
+      const matchesSearch =
+        !term ||
+        p.name.toLowerCase().includes(term) ||
+        (p.productCode && p.productCode.toLowerCase().includes(term));
 
       // Category filter
       const matchesCategory = categoryFilter === 'ALL' || p.category === categoryFilter;
 
       // Status filter
       const status = calculateStockStatus(p.quantity, p.minStock);
-      const matchesStatus = statusFilter === 'ALL' || status === statusFilter;
+      const matchesStatus =
+        statusFilter === 'ALL' ||
+        status === statusFilter ||
+        (statusFilter === 'Needs Restock' && p.quantity <= p.minStock);
 
       return matchesSearch && matchesCategory && matchesStatus;
     });
   }, [products, searchTerm, categoryFilter, statusFilter]);
 
   // Validation logic
-  const validateForm = (): boolean => {
+  const validateForm = (isEdit = false): boolean => {
     const errors: Record<string, string> = {};
 
     if (!formData.name.trim()) {
       errors.name = 'Product name is required';
+    }
+
+    // Product code uniqueness validation
+    const code = formData.productCode.trim();
+    if (code) {
+      const duplicate = products.find(
+        (p) =>
+          (!isEdit || p.id !== editingProduct?.id) &&
+          p.productCode &&
+          p.productCode.trim().toLowerCase() === code.toLowerCase()
+      );
+      if (duplicate) {
+        errors.productCode = `Product code "${code}" is already used by "${duplicate.name}".`;
+      }
     }
 
     const pPrice = parseFloat(formData.purchasePrice);
@@ -113,6 +136,7 @@ export default function ProductsPage() {
     setFormData({
       name: product.name,
       category: product.category,
+      productCode: product.productCode || '',
       purchasePrice: product.purchasePrice.toString(),
       sellingPrice: product.sellingPrice.toString(),
       quantity: product.quantity.toString(),
@@ -124,11 +148,12 @@ export default function ProductsPage() {
 
   const handleAddSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!validateForm()) return;
+    if (!validateForm(false)) return;
 
     addProduct({
       name: formData.name.trim(),
       category: formData.category,
+      productCode: formData.productCode.trim() || undefined,
       purchasePrice: parseFloat(formData.purchasePrice),
       sellingPrice: parseFloat(formData.sellingPrice),
       quantity: parseInt(formData.quantity, 10),
@@ -142,13 +167,14 @@ export default function ProductsPage() {
   const handleEditSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingProduct) return;
-    if (!validateForm()) return;
+    if (!validateForm(true)) return;
 
     updateProduct(
       editingProduct.id,
       {
         name: formData.name.trim(),
         category: formData.category,
+        productCode: formData.productCode.trim() || undefined,
         purchasePrice: parseFloat(formData.purchasePrice),
         sellingPrice: parseFloat(formData.sellingPrice),
         quantity: parseInt(formData.quantity, 10),
@@ -213,13 +239,13 @@ export default function ProductsPage() {
       <div className="card" style={{ marginBottom: '20px', padding: '16px 20px' }}>
         <div style={{ display: 'flex', gap: '14px', flexWrap: 'wrap', alignItems: 'center' }}>
           {/* Search */}
-          <div className="search-input-wrapper" style={{ minWidth: '240px' }}>
+          <div className="search-input-wrapper" style={{ minWidth: '280px' }}>
             <span className="search-icon">🔍</span>
             <input
               id="search-product-name"
               type="text"
               className="form-control"
-              placeholder="Search product by name..."
+              placeholder="Search by name or product code / barcode..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
             />
@@ -243,7 +269,7 @@ export default function ProductsPage() {
           </div>
 
           {/* Status Filter */}
-          <div style={{ minWidth: '160px' }}>
+          <div style={{ minWidth: '170px' }}>
             <select
               id="filter-status"
               className="form-control"
@@ -254,6 +280,7 @@ export default function ProductsPage() {
               <option value="In Stock">In Stock</option>
               <option value="Low Stock">Low Stock</option>
               <option value="Out of Stock">Out of Stock</option>
+              <option value="Needs Restock">Needs Restock (&le; Min)</option>
             </select>
           </div>
 
@@ -308,7 +335,7 @@ export default function ProductsPage() {
             <table className="app-table" id="products-table">
               <thead>
                 <tr>
-                  <th>Product Name</th>
+                  <th>Product</th>
                   <th>Category</th>
                   <th>Purchase Price</th>
                   <th>Selling Price</th>
@@ -321,10 +348,44 @@ export default function ProductsPage() {
               <tbody>
                 {filteredProducts.map((p) => {
                   const status = calculateStockStatus(p.quantity, p.minStock);
+                  const needsRestock = p.quantity <= p.minStock;
                   return (
                     <tr key={p.id} id={`product-row-${p.id}`}>
                       <td>
-                        <strong style={{ fontSize: '0.92rem' }}>{p.name}</strong>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                          <strong style={{ fontSize: '0.92rem' }}>{p.name}</strong>
+                          <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                            {p.productCode ? (
+                              <span
+                                style={{
+                                  fontSize: '0.72rem',
+                                  fontFamily: 'monospace',
+                                  backgroundColor: 'var(--border-subtle)',
+                                  padding: '1px 5px',
+                                  borderRadius: '4px',
+                                  color: 'var(--text-secondary)',
+                                  border: '1px solid var(--border-color)',
+                                }}
+                              >
+                                🏷️ {p.productCode}
+                              </span>
+                            ) : null}
+                            {needsRestock && (
+                              <span
+                                style={{
+                                  fontSize: '0.68rem',
+                                  fontWeight: 600,
+                                  color: '#dc2626',
+                                  backgroundColor: '#fee2e2',
+                                  padding: '1px 5px',
+                                  borderRadius: '4px',
+                                }}
+                              >
+                                Needs Restock
+                              </span>
+                            )}
+                          </div>
+                        </div>
                       </td>
                       <td>
                         <CategoryBadge category={p.category} />
@@ -440,6 +501,26 @@ export default function ProductsPage() {
               autoFocus
             />
             {formErrors.name && <span className="form-error-msg">{formErrors.name}</span>}
+          </div>
+
+          <div className="form-group">
+            <label className="form-label" htmlFor="add-product-code">
+              Product Code / Barcode (Optional)
+            </label>
+            <input
+              id="add-product-code"
+              type="text"
+              className={`form-control ${formErrors.productCode ? 'error' : ''}`}
+              placeholder="e.g. 890123456789 or ITEM-101"
+              value={formData.productCode}
+              onChange={(e) => setFormData({ ...formData, productCode: e.target.value })}
+            />
+            {formErrors.productCode && (
+              <span className="form-error-msg">{formErrors.productCode}</span>
+            )}
+            <span className="form-hint">
+              Used for rapid barcode scanner lookup and instant billing search.
+            </span>
           </div>
 
           <div className="form-group">
@@ -593,6 +674,23 @@ export default function ProductsPage() {
                 onChange={(e) => setFormData({ ...formData, name: e.target.value })}
               />
               {formErrors.name && <span className="form-error-msg">{formErrors.name}</span>}
+            </div>
+
+            <div className="form-group">
+              <label className="form-label" htmlFor="edit-product-code">
+                Product Code / Barcode (Optional)
+              </label>
+              <input
+                id="edit-product-code"
+                type="text"
+                className={`form-control ${formErrors.productCode ? 'error' : ''}`}
+                placeholder="e.g. 890123456789 or ITEM-101"
+                value={formData.productCode}
+                onChange={(e) => setFormData({ ...formData, productCode: e.target.value })}
+              />
+              {formErrors.productCode && (
+                <span className="form-error-msg">{formErrors.productCode}</span>
+              )}
             </div>
 
             <div className="form-group">
