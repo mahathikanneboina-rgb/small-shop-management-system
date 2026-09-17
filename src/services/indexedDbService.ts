@@ -376,11 +376,11 @@ class IndexedDbService {
     let stockHistory = await this.getAll<StockHistory>('stockHistory');
     let sales = await this.getAll<Sale>('sales');
     let purchases = await this.getAll<Purchase>('purchases');
-    let customers = await this.getAll<Customer>('customers');
-    let suppliers = await this.getAll<Supplier>('suppliers');
+    const customers = await this.getAll<Customer>('customers');
+    const suppliers = await this.getAll<Supplier>('suppliers');
     let expenses = await this.getAll<Expense>('expenses');
-    let syncQueue = await this.getAll<SyncQueueItem>('syncQueue');
-    let auditLogs = await this.getAll<AuditLog>('auditLogs');
+    const syncQueue = await this.getAll<SyncQueueItem>('syncQueue');
+    const auditLogs = await this.getAll<AuditLog>('auditLogs');
     let settings = await this.getById<ShopSettings>('settings', 'shop_settings');
 
     if (!settings) {
