@@ -38,6 +38,12 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       setUser(firebaseUser);
       if (firebaseUser) {
+        // Middleware verifies this signed token before allowing protected routes.
+        if (typeof document !== "undefined") {
+          const idToken = await firebaseUser.getIdToken();
+          const secure = window.location.protocol === "https:" ? "; Secure" : "";
+          document.cookie = `auth=${encodeURIComponent(idToken)}; path=/; max-age=3600; SameSite=Lax${secure}`;
+        }
         try {
           const docRef = doc(firestore, "users", firebaseUser.uid);
           const snap = await getDoc(docRef);
@@ -65,10 +71,6 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             };
             await setDoc(docRef, defaultProfile);
             setProfile(defaultProfile);
-          }
-          // Set cookie for middleware
-          if (typeof document !== "undefined") {
-            document.cookie = `auth=${firebaseUser.uid}; path=/; max-age=86400; SameSite=Lax`;
           }
         } catch (err) {
           console.warn("Could not load user profile from Firestore:", err);
