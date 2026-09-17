@@ -4,6 +4,8 @@ import React, { useState } from "react";
 import { useAuth } from "../../context/AuthContext";
 import { useRouter } from "next/navigation";
 
+import Link from "next/link";
+
 export default function RegisterPage() {
   const { register } = useAuth();
   const router = useRouter();
@@ -31,6 +33,10 @@ export default function RegisterPage() {
       setError("Password is required");
       return;
     }
+    if (password.length < 6) {
+      setError("Password should be at least 6 characters");
+      return;
+    }
     if (password !== confirmPassword) {
       setError("Passwords do not match");
       return;
@@ -41,14 +47,18 @@ export default function RegisterPage() {
       setSuccess("Registration successful! Redirecting to dashboard…");
       router.push("/");
     } catch (err: any) {
-      const code = err.code;
+      const code = err?.code || "";
       let msg = "Registration failed";
       if (code === "auth/email-already-in-use") {
-        msg = "Email already in use";
+        msg = "An account with this email already exists.";
       } else if (code === "auth/invalid-email") {
-        msg = "Invalid email address";
+        msg = "Please enter a valid email address.";
       } else if (code === "auth/weak-password") {
-        msg = "Password is too weak";
+        msg = "Password should be at least 6 characters.";
+      } else if (code === "auth/invalid-api-key" || code === "auth/api-key-not-valid") {
+        msg = "Firebase API key is not configured or invalid in .env.local.";
+      } else {
+        msg = `Registration failed (${code || err?.message || "unknown error"})`;
       }
       setError(msg);
     } finally {
@@ -57,63 +67,108 @@ export default function RegisterPage() {
   };
 
   return (
-    <div className="max-w-md mx-auto mt-12 p-6 border rounded shadow">
-      <h1 className="text-2xl font-bold mb-4">Create Account</h1>
-      {error && <p className="text-red-600 mb-2">{error}</p>}
-      {success && <p className="text-green-600 mb-2">{success}</p>}
-      <form onSubmit={handleSubmit}>
-        <div className="mb-4">
-          <label className="block mb-1" htmlFor="fullName">Full Name</label>
+    <div className="auth-card">
+      <div className="auth-header">
+        <div className="auth-logo-badge">🏪</div>
+        <h1 className="auth-title">Create Account</h1>
+        <p className="auth-subtitle">Register a new staff member for shop access</p>
+      </div>
+
+      {error && (
+        <div className="auth-alert auth-alert-error" role="alert">
+          <span>⚠️</span>
+          <span>{error}</span>
+        </div>
+      )}
+
+      {success && (
+        <div className="auth-alert auth-alert-success" role="alert">
+          <span>✓</span>
+          <span>{success}</span>
+        </div>
+      )}
+
+      <form className="auth-form" onSubmit={handleSubmit}>
+        <div className="form-group">
+          <label className="form-label" htmlFor="fullName">
+            Full Name
+          </label>
           <input
             id="fullName"
             type="text"
+            placeholder="John Doe"
             value={fullName}
             onChange={(e) => setFullName(e.target.value)}
-            className="w-full border rounded px-2 py-1"
+            className="form-control"
             required
+            autoComplete="name"
           />
         </div>
-        <div className="mb-4">
-          <label className="block mb-1" htmlFor="email">Email</label>
+
+        <div className="form-group">
+          <label className="form-label" htmlFor="email">
+            Email Address
+          </label>
           <input
             id="email"
             type="email"
+            placeholder="staff@shop.com"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            className="w-full border rounded px-2 py-1"
+            className="form-control"
             required
+            autoComplete="email"
           />
         </div>
-        <div className="mb-4">
-          <label className="block mb-1" htmlFor="password">Password</label>
+
+        <div className="form-group">
+          <label className="form-label" htmlFor="password">
+            Password
+          </label>
           <input
             id="password"
             type="password"
+            placeholder="Minimum 6 characters"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="w-full border rounded px-2 py-1"
+            className="form-control"
             required
+            autoComplete="new-password"
           />
         </div>
-        <div className="mb-4">
-          <label className="block mb-1" htmlFor="confirmPassword">Confirm Password</label>
+
+        <div className="form-group">
+          <label className="form-label" htmlFor="confirmPassword">
+            Confirm Password
+          </label>
           <input
             id="confirmPassword"
             type="password"
+            placeholder="Repeat password"
             value={confirmPassword}
             onChange={(e) => setConfirmPassword(e.target.value)}
-            className="w-full border rounded px-2 py-1"
+            className="form-control"
             required
+            autoComplete="new-password"
           />
         </div>
+
         <button
           type="submit"
           disabled={loading}
-          className="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700"
+          className="btn btn-primary btn-block btn-lg"
+          style={{ marginTop: '10px' }}
         >
-          {loading ? "Creating…" : "Register"}
+          {loading ? "Creating Account…" : "Register Account"}
         </button>
       </form>
+
+      <div className="auth-footer">
+        Already have an account?{" "}
+        <Link href="/login" className="auth-link">
+          Sign in here
+        </Link>
+      </div>
     </div>
   );
 }
